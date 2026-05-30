@@ -140,11 +140,31 @@ tested too and behaves identically — so **we do NOT add it**; the existing
 `build_worker` executor is sufficient. We keep an integration test asserting the
 activity span parents the dspy spans, as a guard against future Temporal changes.
 
-**Open item (minor):** under the *time-skipping test server*, Temporal emits some
-workflow/activity spans twice (replay artifact of the interceptor in that env).
-DSPy spans are emitted once. Verify span counts against a real local server
-(`temporal server start-dev`) before trusting the test env's span totals; do not
-assert exact Temporal-span counts in tests.
+**Duplicate spans — root-caused, not a Temporal bug.** The doubled Temporal spans
+in the first spike were caused by registering the interceptor on **both** the
+client and the worker — the documented anti-pattern (package README,
+Troubleshooting #3 + Best Practice #4: *"Never register the same
+plugin/interceptor on both client and worker"*). Re-running with the interceptor
+on the **client only** → **0 duplicates**, parenting still PASS. **Rule: attach
+the interceptor/plugin at the client; the worker inherits it. `build_worker` must
+NOT re-add it.**
+
+### Interceptor vs Plugin (Temporal ships both)
+
+| | `TracingInterceptor` (legacy) | `OpenTelemetryPlugin` (new, "recommended") |
+|---|---|---|
+| Workflow span duration | zero-duration | accurate |
+| TracerProvider | any | must use `create_tracer_provider()` (replay-safe) |
+| OTel APIs inside workflow | no | yes |
+| API stability | stable | experimental |
+| Register | client only | client only |
+
+**Recommendation: `TracingInterceptor` for v1.** We emit all DSPy spans in
+**activities**, not workflow code, so the plugin's headline advantage (accurate
+workflow-span durations + OTel APIs in workflows) doesn't benefit us, while the
+interceptor is stable and works with the user's **existing** TracerProvider (no
+forced `create_tracer_provider()`). Revisit the plugin if we ever want
+workflow-internal spans. Either way, register on the client only.
 
 ## Privacy
 
@@ -171,10 +191,18 @@ Optional dependency group:
 [project.optional-dependencies]
 tracing = ["opentelemetry-sdk>=1.27", "opentelemetry-exporter-otlp-proto-grpc>=1.27"]
 ```
-Touchpoints: `build_worker` accepts `interceptors=` + registers the callback;
-`client.connect` optionally attaches the interceptor; `sandbox.py` adds
-`opentelemetry`/`grpc`/`wrapt` to passthrough (used only in activities). Guard all
-OTel imports so a core install never loads them.
+Touchpoints (registration model matters — see duplicate-spans finding):
+- **`connect()`** attaches the `TracingInterceptor` to the **client** (the single
+  registration point). Workers built from that client inherit it.
+- **`build_worker`** registers only the **DSPy callback** (`dspy.settings.callbacks`)
+  at worker startup. It must **not** add the interceptor (double-registration →
+  duplicate spans).
+- **`sandbox.py`** adds `opentelemetry` to passthrough (used only in
+  activities/interceptor). Guard all OTel imports so a core install never loads
+  them.
+
+`setup_tracing(...)` ties it together: builds/uses a `TracerProvider` + OTLP
+exporter, returns the interceptor for `connect()`, and registers the callback.
 
 ## Testing
 

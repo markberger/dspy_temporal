@@ -129,9 +129,12 @@ def _report(label):
     print(f"  => {verdict}")
 
 
-async def run_variant(env, label, executor):
+async def run_variant(env, label, executor, register_on_worker):
     exporter.clear()
     tq = f"spike-{uuid.uuid4().hex[:8]}"
+    # Per Temporal docs: register the interceptor on the CLIENT only; the worker
+    # inherits it. Registering on both client AND worker double-emits spans.
+    worker_interceptors = [TracingInterceptor()] if register_on_worker else []
     worker = Worker(
         env.client,
         task_queue=tq,
@@ -139,7 +142,7 @@ async def run_variant(env, label, executor):
         activities=[run_program_activity],
         activity_executor=executor,
         workflow_runner=_runner(),
-        interceptors=[TracingInterceptor()],
+        interceptors=worker_interceptors,
     )
     async with worker:
         # Wrap the client call in a root span so the interceptor creates the
@@ -160,8 +163,14 @@ async def main():
         data_converter=data_converter,
         interceptors=[TracingInterceptor()],
     ) as env:
-        await run_variant(env, "default ThreadPoolExecutor", ThreadPoolExecutor(max_workers=4))
-        await run_variant(env, "ContextCopyingExecutor", ContextCopyingExecutor(max_workers=4))
+        await run_variant(
+            env, "interceptor on BOTH client+worker (anti-pattern)",
+            ThreadPoolExecutor(max_workers=4), register_on_worker=True,
+        )
+        await run_variant(
+            env, "interceptor on CLIENT only (per Temporal docs)",
+            ThreadPoolExecutor(max_workers=4), register_on_worker=False,
+        )
 
 
 if __name__ == "__main__":
