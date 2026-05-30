@@ -44,17 +44,34 @@ def configure_lm_from_env(model: str | None = None, **lm_kwargs) -> dspy.BaseLM:
         )
     lm = dspy.LM(model, **lm_kwargs)
     set_worker_lm(lm)
+    # Also set the process-global default. This is the once-at-startup entry
+    # point (main thread / the worker's startup task), so dspy.configure is
+    # allowed here; set_worker_lm itself stays configure-free so it can be
+    # called from any thread or async task.
+    dspy.configure(lm=lm)
     return lm
 
 
 def set_worker_lm(lm: dspy.BaseLM) -> None:
-    """Set the default LM applied to programs that don't carry their own."""
+    """Set the default LM applied to programs that don't carry their own.
+
+    The coarse activity applies this LM via ``dspy.context`` per call, so this
+    setter deliberately does not touch ``dspy.settings`` -- keeping it safe to
+    call from any thread or async task.
+    """
     global _WORKER_LM
     _WORKER_LM = lm
-    # Make it the process-global default too, for threads that don't enter the
-    # activity's dspy.context (e.g. background work inside a builder).
-    dspy.configure(lm=lm)
 
 
 def get_worker_lm() -> dspy.BaseLM | None:
     return _WORKER_LM
+
+
+def clear_worker_lm() -> None:
+    """Clear the worker LM so programs fall back to their own / global LM.
+
+    Does not touch ``dspy.settings`` (clearing the global config is not
+    supported mid-process); it only drops this module's default override.
+    """
+    global _WORKER_LM
+    _WORKER_LM = None

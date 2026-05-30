@@ -5,6 +5,24 @@ import pytest
 from dspy.utils.dummies import DummyLM
 
 import dspy_temporal as dt
+from dspy_temporal import config as config_mod
+from dspy_temporal.registry import ProgramRegistry
+
+
+@pytest.fixture(autouse=True)
+def reset_worker_lm():
+    """Snapshot/restore the worker LM around each test to prevent cross-bleed."""
+    saved = config_mod.get_worker_lm()
+    try:
+        yield
+    finally:
+        config_mod._WORKER_LM = saved
+
+
+@pytest.fixture
+def fresh_registry():
+    """A clean ProgramRegistry instance (isolated from the process-global one)."""
+    return ProgramRegistry()
 
 
 @pytest.fixture
