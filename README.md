@@ -73,6 +73,33 @@ export OPENAI_API_KEY=sk-...
 
 A runnable example lives in `examples/` (`qa_program.py`, `worker.py`, `run.py`).
 
+## Tracing (optional)
+
+Capture LLM traces with OpenTelemetry — dual-emitted as both **gen_ai** semantic
+conventions (Langfuse, Grafana/Tempo, Honeycomb, Datadog) and **OpenInference**
+(Arize Phoenix). Install the extra and call `setup_tracing` once, then pass the
+returned interceptor to the **client** (the worker inherits it):
+
+```bash
+uv sync --extra tracing
+```
+
+```python
+import dspy_temporal as dt
+from dspy_temporal.tracing import setup_tracing
+
+interceptor = setup_tracing(service_name="qa-worker")   # OTLP by default; reads OTEL_EXPORTER_OTLP_*
+client = await dt.connect("localhost:7233", interceptors=[interceptor])
+worker = dt.build_worker(client, config=dt.RunConfig(task_queue="dspy-temporal"))
+await worker.run()
+```
+
+You get one trace per run: `Workflow → Activity → dspy.module → chat <model>`, with
+token usage, model, finish reasons, and cost on the LM spans. Prompt/completion
+**content is off by default**; enable it with `setup_tracing(capture_content=True)`
+or `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`. Register the interceptor on
+the **client only** — adding it to the worker too double-emits spans.
+
 ## Tests
 
 ```bash

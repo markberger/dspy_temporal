@@ -16,6 +16,10 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
 ]
+tracing = [
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27",
+]
 
 [build-system]
 requires = ["hatchling"]

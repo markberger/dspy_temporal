@@ -13,6 +13,9 @@ from __future__ import annotations
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 # Heavy, I/O-bound modules that are activity-only. Passthrough applies by prefix.
+# `opentelemetry` is included because, when tracing is enabled, the worker
+# inherits the client's TracingInterceptor whose workflow-side component imports
+# OTel inside the sandbox; it is otherwise unused in workflow code.
 PASSTHROUGH_MODULES = (
     "dspy",
     "litellm",
@@ -21,6 +24,7 @@ PASSTHROUGH_MODULES = (
     "httpx",
     "tiktoken",
     "tokenizers",
+    "opentelemetry",
 )
 
 

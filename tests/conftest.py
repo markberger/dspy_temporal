@@ -11,12 +11,14 @@ from dspy_temporal.registry import ProgramRegistry
 
 @pytest.fixture(autouse=True)
 def reset_worker_lm():
-    """Snapshot/restore the worker LM around each test to prevent cross-bleed."""
-    saved = config_mod.get_worker_lm()
+    """Snapshot/restore worker LM + tracing callback around each test."""
+    saved_lm = config_mod.get_worker_lm()
+    saved_cb = config_mod.get_tracing_callback()
     try:
         yield
     finally:
-        config_mod._WORKER_LM = saved
+        config_mod._WORKER_LM = saved_lm
+        config_mod._TRACING_CALLBACK = saved_cb
 
 
 @pytest.fixture
