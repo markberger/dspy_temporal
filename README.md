@@ -100,6 +100,38 @@ token usage, model, finish reasons, and cost on the LM spans. Prompt/completion
 or `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`. Register the interceptor on
 the **client only** — adding it to the worker too double-emits spans.
 
+## Run locally with Docker Compose (Phoenix tracing)
+
+`docker-compose.yml` brings up a [Temporal](https://temporal.io) dev server, an
+[Arize Phoenix](https://phoenix.arize.com) UI, and a traced worker for the example
+`qa` program — so you can fire a DSPy program at `gpt-5-nano` and watch the trace.
+
+```bash
+cp .env.example .env            # then put a real OPENROUTER_API_KEY in .env
+docker compose up --build       # temporal (7233/8233), phoenix (6006/4317), worker
+```
+
+With the stack up, start a run from the host and view the trace. Point the starter at
+Phoenix so it emits the root `StartWorkflow` span and propagates context — that's what
+ties the worker's `RunWorkflow`/`StartActivity`/`RunActivity` and the DSPy spans into a
+**single** trace (standard distributed tracing; without it they fragment into separate
+traces):
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+    uv run python examples/run.py "Why is the sky blue?"
+```
+
+- **Phoenix UI:** http://localhost:6006 — the trace `Workflow → Activity → dspy.module
+  → chat openrouter/openai/gpt-5-nano` with token usage, model, and (content capture is
+  on in compose) the prompt/completion text.
+- **Temporal UI:** http://localhost:8233 — the workflow execution.
+
+The worker reads `TEMPORAL_ADDRESS`, `DSPY_LM_MODEL`, and `OTEL_EXPORTER_OTLP_ENDPOINT`
+from its environment; it enables tracing automatically when an OTLP endpoint is set.
+The Temporal dev server uses an in-memory store, so workflow history resets when the
+stack restarts.
+
 ## Tests
 
 ```bash
