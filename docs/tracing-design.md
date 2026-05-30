@@ -220,9 +220,10 @@ exporter, returns the interceptor for `connect()`, and registers the callback.
 
 ## Phases
 
-- **A (ship first):** callback + semconv metadata mapping (dual-emit) +
-  `setup_tracing` + interceptor wiring + context-copying executor + sandbox
-  passthrough + unit/integration tests. Coarse mode, metadata only.
+- **A (SHIPPED):** callback + semconv metadata mapping (dual-emit) +
+  `setup_tracing` + interceptor wiring (client-only) + sandbox passthrough +
+  unit/integration tests. Coarse mode. Includes a basic opt-in content path.
+  No context-copying executor needed (spike showed the default works).
 - **B:** content capture (dual-emit, opt-in), tool/adapter spans, cost, metrics
   (`gen_ai.client.token.usage` histograms).
 - **C:** fine mode — per-LM-call activity spans, workflow-as-parent; no span
