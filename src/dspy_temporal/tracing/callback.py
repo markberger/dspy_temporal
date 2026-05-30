@@ -56,20 +56,31 @@ class DSPyOTelCallback(BaseCallback):
             span.set_status(Status(StatusCode.ERROR, str(exception)))
         span.end()
 
+    # --- content capture (opt-in) ------------------------------------------
+    def _input_content_attrs(self, value: Any) -> dict[str, Any]:
+        if not self._capture_content:
+            return {}
+        return {
+            semconv.INPUT_VALUE: semconv.safe_json(value),
+            semconv.INPUT_MIME_TYPE: semconv.MIME_JSON,
+        }
+
+    def _output_content_attrs(self, outputs: Any) -> dict[str, Any]:
+        if not self._capture_content or outputs is None:
+            return {}
+        return {
+            semconv.OUTPUT_VALUE: semconv.safe_json(_to_jsonable(outputs)),
+            semconv.OUTPUT_MIME_TYPE: semconv.MIME_JSON,
+        }
+
     # --- module (CHAIN) ----------------------------------------------------
     def on_module_start(self, call_id, instance, inputs):
         attrs = semconv.module_attributes(instance)
-        if self._capture_content:
-            attrs[semconv.INPUT_VALUE] = semconv.safe_json(inputs)
-            attrs[semconv.INPUT_MIME_TYPE] = semconv.MIME_JSON
+        attrs.update(self._input_content_attrs(inputs))
         self._start(call_id, f"dspy.module {type(instance).__name__}", attrs)
 
     def on_module_end(self, call_id, outputs, exception=None):
-        attrs = {}
-        if self._capture_content and outputs is not None:
-            attrs[semconv.OUTPUT_VALUE] = semconv.safe_json(_to_jsonable(outputs))
-            attrs[semconv.OUTPUT_MIME_TYPE] = semconv.MIME_JSON
-        self._end(call_id, attrs, exception)
+        self._end(call_id, self._output_content_attrs(outputs), exception)
 
     # --- LM (LLM) ----------------------------------------------------------
     def on_lm_start(self, call_id, instance, inputs):
@@ -91,28 +102,26 @@ class DSPyOTelCallback(BaseCallback):
         attrs: dict[str, Any] = {}
         if instance is not None:
             new_entries = (getattr(instance, "history", []) or [])[start:]
-            if new_entries:
-                attrs = semconv.lm_response_attributes(new_entries[-1])
-        if self._capture_content and outputs is not None:
-            attrs[semconv.OUTPUT_VALUE] = semconv.safe_json(_to_jsonable(outputs))
-            attrs[semconv.OUTPUT_MIME_TYPE] = semconv.MIME_JSON
+            # The coarse worker shares one LM instance across concurrent
+            # activities, so its `history` list interleaves entries from calls
+            # racing in other threads. Only attribute usage/cost/model when
+            # exactly one entry was appended during this call -- otherwise we
+            # cannot tell which entry is ours, so we omit the response attributes
+            # rather than risk reporting another call's tokens/cost.
+            if len(new_entries) == 1:
+                attrs = semconv.lm_response_attributes(new_entries[0])
+        attrs.update(self._output_content_attrs(outputs))
         self._end(call_id, attrs, exception)
 
     # --- tools (TOOL) ------------------------------------------------------
     def on_tool_start(self, call_id, instance, inputs):
         attrs = semconv.tool_attributes(instance)
-        if self._capture_content:
-            attrs[semconv.INPUT_VALUE] = semconv.safe_json(inputs)
-            attrs[semconv.INPUT_MIME_TYPE] = semconv.MIME_JSON
+        attrs.update(self._input_content_attrs(inputs))
         name = getattr(instance, "name", None) or type(instance).__name__
         self._start(call_id, f"execute_tool {name}", attrs)
 
     def on_tool_end(self, call_id, outputs, exception=None):
-        attrs = {}
-        if self._capture_content and outputs is not None:
-            attrs[semconv.OUTPUT_VALUE] = semconv.safe_json(_to_jsonable(outputs))
-            attrs[semconv.OUTPUT_MIME_TYPE] = semconv.MIME_JSON
-        self._end(call_id, attrs, exception)
+        self._end(call_id, self._output_content_attrs(outputs), exception)
 
 
 def _to_jsonable(obj: Any) -> Any:

@@ -97,9 +97,18 @@ read the new entries in `on_lm_end` via the stored instance). Consequences:
 - Couples token/cost/model attributes to `disable_history=False`. Coarse mode
   keeps history on, so this is fine; the callback degrades gracefully to
   metadata-without-tokens if history is disabled.
-- Under heavy intra-program LM concurrency on a **shared** LM instance, history
-  ordering is racy, so per-span token attribution is best-effort. **Fine mode
-  fixes this**: each LM call is its own activity with its own isolated span.
+- The history list lives on the LM **instance**, and the coarse worker shares one
+  `worker_lm` across every activity running concurrently in the
+  `ThreadPoolExecutor` (up to `max_concurrent_activities`). So under concurrency —
+  whether from `dspy.Parallel` *within* a program or from independent jobs racing
+  in separate activities — appends from different calls interleave in that shared
+  list, and `history[start:]` can pick up another call's entry. We therefore only
+  attribute usage/cost/model when **exactly one** entry was appended during the
+  call (`len(new_entries) == 1`); otherwise we omit the response attributes rather
+  than risk reporting the wrong call's tokens. The result is "missing under
+  contention" instead of "wrong under contention" — the safer failure for a
+  billing/observability signal. **Fine mode fixes this entirely**: each LM call is
+  its own activity with its own isolated span.
 
 ## Temporal boundary: context propagation
 
