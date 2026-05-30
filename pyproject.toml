@@ -45,6 +45,9 @@ source = ["src/dspy_temporal", "*/site-packages/dspy_temporal"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+# Floor, not a ceiling: the suite currently sits at 100%. 90 catches regressions
+# without being brittle to a stray defensive line.
+fail_under = 90
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
