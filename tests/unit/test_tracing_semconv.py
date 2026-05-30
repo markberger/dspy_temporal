@@ -70,5 +70,5 @@ def test_finish_reasons_bad_response_is_ignored():
 
 
 def test_module_and_tool_kinds():
-    assert semconv.module_attributes(None)["openinference.span.kind"] == "CHAIN"
-    assert semconv.tool_attributes(None)["openinference.span.kind"] == "TOOL"
+    assert semconv.module_attributes()["openinference.span.kind"] == "CHAIN"
+    assert semconv.tool_attributes()["openinference.span.kind"] == "TOOL"

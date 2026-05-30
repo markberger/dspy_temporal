@@ -35,11 +35,10 @@ class DSPyOTelCallback(BaseCallback):
         parent_id = ACTIVE_CALL_ID.get()
         with self._lock:
             parent_span = self._spans.get(parent_id)
-        # parent_span is None for the top span -> inherit the current OTel
-        # context (the Temporal activity span).
-        ctx = set_span_in_context(parent_span) if parent_span is not None else None
-        span = self._tracer.start_span(name, context=ctx, attributes=attributes)
-        with self._lock:
+            # parent_span is None for the top span -> inherit the current OTel
+            # context (the Temporal activity span).
+            ctx = set_span_in_context(parent_span) if parent_span is not None else None
+            span = self._tracer.start_span(name, context=ctx, attributes=attributes)
             self._spans[call_id] = span
         return span
 
@@ -75,7 +74,7 @@ class DSPyOTelCallback(BaseCallback):
 
     # --- module (CHAIN) ----------------------------------------------------
     def on_module_start(self, call_id, instance, inputs):
-        attrs = semconv.module_attributes(instance)
+        attrs = semconv.module_attributes()
         attrs.update(self._input_content_attrs(inputs))
         self._start(call_id, f"dspy.module {type(instance).__name__}", attrs)
 
@@ -115,7 +114,7 @@ class DSPyOTelCallback(BaseCallback):
 
     # --- tools (TOOL) ------------------------------------------------------
     def on_tool_start(self, call_id, instance, inputs):
-        attrs = semconv.tool_attributes(instance)
+        attrs = semconv.tool_attributes()
         attrs.update(self._input_content_attrs(inputs))
         name = getattr(instance, "name", None) or type(instance).__name__
         self._start(call_id, f"execute_tool {name}", attrs)

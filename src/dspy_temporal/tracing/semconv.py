@@ -65,11 +65,11 @@ def lm_span_name(model: str | None) -> str:
     return f"chat {model}" if model else "chat"
 
 
-def module_attributes(instance: Any) -> dict[str, Any]:
+def module_attributes() -> dict[str, Any]:
     return {OPENINFERENCE_SPAN_KIND: KIND_CHAIN}
 
 
-def tool_attributes(instance: Any) -> dict[str, Any]:
+def tool_attributes() -> dict[str, Any]:
     return {OPENINFERENCE_SPAN_KIND: KIND_TOOL}
 
 

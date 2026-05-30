@@ -78,6 +78,7 @@ def clear_worker_lm() -> None:
 
 
 # --- Worker-side tracing callback -------------------------------------------
+# Mirrors the worker-LM accessor pattern above (module-global + set/get/clear).
 # Holds the optional DSPy tracing callback as a plain object reference. Kept here
 # (not in the tracing subpackage) so the activity can read it WITHOUT importing
 # OpenTelemetry into the core import path. The object is a dspy.BaseCallback;

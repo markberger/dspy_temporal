@@ -35,7 +35,13 @@ def run_program_activity(call: ProgramCallInput) -> ProgramCallOutput:
     # code), so it is replay-safe by construction.
     tracing_callback = get_tracing_callback()
     if tracing_callback is not None:
-        ctx_kwargs["callbacks"] = list(dspy.settings.callbacks or []) + [tracing_callback]
+        callbacks = list(dspy.settings.callbacks or [])
+        # Guard against a double-add: a user may also have registered this same
+        # callback globally via dspy.settings.callbacks, which would double-emit
+        # every span.
+        if tracing_callback not in callbacks:
+            callbacks.append(tracing_callback)
+        ctx_kwargs["callbacks"] = callbacks
 
     with dspy.context(**ctx_kwargs):
         prediction = program(**call.inputs)

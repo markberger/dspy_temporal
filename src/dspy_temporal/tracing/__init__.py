@@ -36,14 +36,19 @@ def setup_tracing(
     program activity emits LLM spans.
 
     Args:
-        service_name: ``service.name`` resource attribute (when we build the provider).
+        service_name: ``service.name`` resource attribute. Only applied when we
+            build a provider; ignored if an existing provider is reused.
         exporter: a span exporter; defaults to OTLP gRPC when we build the provider.
-            Pass an ``InMemorySpanExporter`` in tests.
+            Pass an ``InMemorySpanExporter`` in tests. Ignored when an existing SDK
+            provider is reused (i.e. ``tracer_provider`` is None and a global SDK
+            provider is already installed and no ``exporter`` is given).
         tracer_provider: use this provider instead of building one.
         capture_content: capture prompt/completion text. ``None`` -> read the
             ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`` env var (default OFF).
         register_callback: register the DSPy span-emitting callback (worker side).
-        set_global: set the built provider as the global OTel tracer provider.
+        set_global: promote our provider to the global OTel tracer provider. A
+            no-op if a global provider is already installed (OTel forbids
+            overriding it).
         always_create_workflow_spans: create workflow/activity spans even when the
             client call has no parent span, so each execution is a full trace.
     """
@@ -58,10 +63,17 @@ def setup_tracing(
     if tracer_provider is None:
         existing = trace.get_tracer_provider()
         if isinstance(existing, SDKTracerProvider) and exporter is None:
-            tracer_provider = existing  # reuse the user's already-configured provider
+            # Reuse the user's already-configured provider as-is (their
+            # service_name stands; we don't override it).
+            tracer_provider = existing
         else:
             tracer_provider = build_tracer_provider(service_name, exporter)
-            if set_global:
+            # Promote to global only if nothing real is installed yet. OTel
+            # refuses to override an existing provider (and logs a warning), so
+            # calling set_tracer_provider over an SDK provider would be a
+            # confusing no-op -- the interceptor/callback still use the provider
+            # we just built and return, but the global stays whatever was there.
+            if set_global and not isinstance(existing, SDKTracerProvider):
                 trace.set_tracer_provider(tracer_provider)
     elif set_global:
         trace.set_tracer_provider(tracer_provider)
