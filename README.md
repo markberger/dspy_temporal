@@ -76,7 +76,18 @@ A runnable example lives in `examples/` (`qa_program.py`, `worker.py`, `run.py`)
 ## Tests
 
 ```bash
-uv run pytest        # unit (ActivityEnvironment) + integration (time-skipping WorkflowEnvironment)
+uv run pytest                                   # run the suite
+uv run pytest --cov=dspy_temporal --cov-branch --cov-report=term-missing   # with coverage
 ```
 
-Tests use DSPy's `DummyLM`, so they need no network or API keys.
+Unit tests use `ActivityEnvironment`; integration tests use a time-skipping
+`WorkflowEnvironment`. All tests use DSPy's `DummyLM`, so they need no network or
+API keys. Coverage is 100% line+branch with a 90% floor (`fail_under`).
+
+CI-style gate:
+
+```bash
+uv sync --extra dev
+uv run pytest --cov=dspy_temporal --cov-branch \
+  --cov-report=term-missing --cov-report=xml --cov-fail-under=90
+```

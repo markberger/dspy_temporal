@@ -14,6 +14,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
 ]
 
 [build-system]
@@ -29,3 +30,38 @@ dspy = { path = "../dspy", editable = true }
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["dspy_temporal"]
+branch = true
+parallel = true
+# The coarse activity runs inside a ThreadPoolExecutor; trace those threads too.
+concurrency = ["thread"]
+
+[tool.coverage.paths]
+# Fold the resolved import path back onto src/ for readable reports.
+source = ["src/dspy_temporal", "*/site-packages/dspy_temporal"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+# Floor, not a ceiling: the suite currently sits at 100%. 90 catches regressions
+# without being brittle to a stray defensive line.
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "\\.\\.\\.",
+    "@(abc\\.)?abstractmethod",
+]
+omit = [
+    "*/tests/*",
+    "*/examples/*",
+    # Pure import re-exports; running it to 100% on import would inflate the gate.
+    "src/dspy_temporal/__init__.py",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"

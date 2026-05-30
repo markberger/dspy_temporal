@@ -5,7 +5,12 @@ import json
 import dspy
 from pydantic import BaseModel
 
-from dspy_temporal.serde import dict_to_prediction, normalize_inputs, prediction_to_dict
+from dspy_temporal.serde import (
+    _jsonify,
+    dict_to_prediction,
+    normalize_inputs,
+    prediction_to_dict,
+)
 
 
 class _Meta(BaseModel):
@@ -48,3 +53,32 @@ def test_exotic_value_falls_back_to_str():
     data = prediction_to_dict(dspy.Prediction(x=Weird()))
     json.dumps(data)
     assert data["x"] == "weird!"
+
+
+def test_nested_prediction_is_recursed():
+    inner = dspy.Prediction(answer="42")
+    data = prediction_to_dict(dspy.Prediction(result=inner, tup=(1, 2)))
+    json.dumps(data)
+    assert data["result"] == {"answer": "42"}
+    assert data["tup"] == [1, 2]  # tuple -> list
+
+
+def test_pydantic_like_without_basemodel_uses_model_dump():
+    class Faux:
+        def model_dump(self, mode=None):
+            return {"dumped": True, "mode": mode}
+
+    data = prediction_to_dict(dspy.Prediction(obj=Faux()))
+    json.dumps(data)
+    assert data["obj"] == {"dumped": True, "mode": "json"}
+
+
+def test_normalize_inputs_stringifies_non_str_keys():
+    out = normalize_inputs({1: "x"})
+    assert out == {"1": "x"}
+
+
+def test_jsonify_handles_a_raw_prediction():
+    # _jsonify is a reusable helper; it must convert a Prediction directly even
+    # though prediction_to_dict's toDict() normally pre-flattens nested ones.
+    assert _jsonify(dspy.Prediction(answer="42")) == {"answer": "42"}
