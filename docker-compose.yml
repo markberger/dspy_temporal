@@ -1,0 +1,35 @@
+# Local stack: Temporal dev server + Arize Phoenix + a traced DSPy worker.
+#
+#   1. cp .env.example .env   (put your real OPENROUTER_API_KEY in it)
+#   2. docker compose up --build
+#   3. from the host:  uv run --extra tracing python examples/run.py "Why is the sky blue?"
+#   4. open Phoenix at http://localhost:6006  (Temporal UI: http://localhost:8233)
+services:
+  temporal:
+    image: temporalio/temporal:latest
+    command: server start-dev --ip 0.0.0.0 --ui-port 8233
+    ports:
+      - "7233:7233"   # gRPC frontend (workers + starter connect here)
+      - "8233:8233"   # Temporal Web UI
+    # Ephemeral in-memory store — fine for a local demo; state is lost on restart.
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    ports:
+      - "6006:6006"   # Phoenix UI + OTLP HTTP collector
+      - "4317:4317"   # OTLP gRPC collector (the worker exports here)
+
+  worker:
+    build: .
+    depends_on:
+      - temporal
+      - phoenix
+    env_file:
+      # Provides OPENROUTER_API_KEY and DSPY_LM_MODEL (edit them in .env).
+      - .env
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      # The library's default exporter is OTLP gRPC; point it at Phoenix.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:4317
+      # Capture prompt/completion text in spans (off by default for privacy).
+      OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "true"

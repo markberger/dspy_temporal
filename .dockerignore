@@ -1,0 +1,14 @@
+.venv
+.git
+.gitignore
+docs
+tests
+htmlcov
+.pytest_cache
+**/__pycache__
+*.pyc
+.coverage
+coverage.xml
+.env
+docker-compose.yml
+Dockerfile
