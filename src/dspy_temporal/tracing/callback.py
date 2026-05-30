@@ -4,7 +4,7 @@ Registered via ``dspy.settings.callbacks`` (a first-class extension point, no
 monkeypatching). Span nesting follows DSPy's ``ACTIVE_CALL_ID`` explicitly (via a
 shared call_id -> span map) so it is robust to DSPy's internal worker threads.
 The root span parents to whatever OTel context is current -- inside the activity
-that is the Temporal activity span (verified by scripts/tracing_spike.py).
+that is the Temporal activity span (covered by tests/integration/test_tracing_workflow.py).
 
 DSPy swallows callback exceptions (dspy/utils/callback.py), so a bug here can
 never break a program run.

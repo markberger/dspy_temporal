@@ -123,7 +123,8 @@ context is a `ContextVar` that doesn't auto-propagate into executor threads — 
 the activity span might not be current in the worker thread, orphaning the dspy
 spans.
 
-**Spike result (`scripts/tracing_spike.py`): the default executor already works.**
+**Spike result (a throwaway script, since removed; see commit `ebd91d5` and
+`tests/integration/test_tracing_workflow.py`): the default executor already works.**
 Temporal's SDK propagates the contextvar context into the sync-activity worker
 thread, so a span created inside the activity (root dspy span, `context=None`
 → current) parents to the Temporal `RunActivity` span and yields one unified
