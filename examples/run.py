@@ -10,7 +10,7 @@ interceptor on the client; the ``StartWorkflow`` span it emits seeds the trace t
 ``RunWorkflow``, ``StartActivity``, ``RunActivity`` (and the DSPy spans) all share:
 
     OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \\
-        uv run python examples/run.py "Why is the sky blue?"
+        uv run --extra tracing python examples/run.py "Why is the sky blue?"
 """
 
 import asyncio

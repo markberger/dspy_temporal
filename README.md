@@ -119,7 +119,7 @@ traces):
 
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
-    uv run python examples/run.py "Why is the sky blue?"
+    uv run --extra tracing python examples/run.py "Why is the sky blue?"
 ```
 
 - **Phoenix UI:** http://localhost:6006 — the trace `Workflow → Activity → dspy.module
