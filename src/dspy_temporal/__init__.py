@@ -6,7 +6,7 @@ __version__ = "0.1.0"
 
 from .client import run_program
 from .coarse.activities import run_program_activity
-from .coarse.api import DeployedProgram, deploy_module
+from .coarse.api import DeployedProgram, TemporalProgram, deploy, deploy_module
 from .coarse.workflow import DSPyProgramWorkflow
 from .config import (
     CallOptions,
@@ -18,6 +18,7 @@ from .config import (
     set_worker_lm,
 )
 from .converter import connect, data_converter
+from .execute import execute_coarse, execute_fine
 from .fine.activities import (
     describe_lms_activity,
     lm_call_activity,
@@ -35,18 +36,27 @@ from .models import (
     ToolCallInput,
     ToolCallOutput,
 )
+from .plugin import DSPY_ACTIVITIES, DSPY_WORKFLOWS, DSPyPlugin
 from .registry import ProgramRegistry, default_registry, register_program
 from .worker import build_worker
 
 __all__ = [  # noqa: RUF022 -- grouped by concern with section comments, not alphabetized
     "__version__",
     # auto-wrap API
+    "deploy",
     "deploy_module",
+    "TemporalProgram",
     "DeployedProgram",
     "register_program",
     "run_program",
+    # compose-in-your-own-workflow (Win B)
+    "execute_coarse",
+    "execute_fine",
     # worker / client
     "build_worker",
+    "DSPyPlugin",
+    "DSPY_ACTIVITIES",
+    "DSPY_WORKFLOWS",
     "connect",
     "data_converter",
     "configure_lm_from_env",

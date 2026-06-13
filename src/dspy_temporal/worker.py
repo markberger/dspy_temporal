@@ -1,4 +1,11 @@
-"""Worker construction: register both workflows + all activities."""
+"""Worker construction: register both workflows + all activities.
+
+The fixed activity/workflow set lives in :mod:`dspy_temporal.plugin`
+(:data:`DSPY_ACTIVITIES` / :data:`DSPY_WORKFLOWS`) so ``build_worker`` and
+:class:`DSPyPlugin` share a single source of truth. ``build_worker`` wires the
+``Worker`` directly (it does *not* apply the plugin, to avoid double-application)
+but pulls the same constants.
+"""
 
 from __future__ import annotations
 
@@ -7,11 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from .coarse.activities import run_program_activity
-from .coarse.workflow import DSPyProgramWorkflow
 from .config import RunConfig
-from .fine.activities import describe_lms_activity, lm_call_activity, tool_call_activity
-from .fine.workflow import DSPyProgramFineWorkflow
+from .plugin import DSPY_ACTIVITIES, DSPY_WORKFLOWS
 from .sandbox import default_workflow_runner
 
 
@@ -21,6 +25,7 @@ def build_worker(
     config: RunConfig | None = None,
     max_concurrent_activities: int = 100,
     extra_passthrough_modules: tuple[str, ...] = (),
+    extra_workflows: tuple = (),
     **worker_kwargs,
 ) -> Worker:
     """Build a Temporal ``Worker`` that serves all registered DSPy programs.
@@ -34,6 +39,10 @@ def build_worker(
     ``extra_passthrough_modules`` is the fine-mode escape hatch: extra module
     prefixes to share from the host, for the rare builder that references a
     module whose import-time side effects would trip the sandbox.
+
+    ``extra_workflows`` registers additional ``@workflow.defn`` classes on the
+    same worker -- e.g. a user-authored workflow that composes a deployed program
+    via ``await agent.run(**inputs)`` (see ``TemporalProgram.run``).
     """
     config = config or RunConfig()
     worker_kwargs.setdefault(
@@ -42,13 +51,8 @@ def build_worker(
     return Worker(
         client,
         task_queue=config.task_queue,
-        workflows=[DSPyProgramWorkflow, DSPyProgramFineWorkflow],
-        activities=[
-            run_program_activity,
-            describe_lms_activity,
-            lm_call_activity,
-            tool_call_activity,
-        ],
+        workflows=[*DSPY_WORKFLOWS, *extra_workflows],
+        activities=list(DSPY_ACTIVITIES),
         activity_executor=ThreadPoolExecutor(max_workers=max_concurrent_activities),
         **worker_kwargs,
     )
