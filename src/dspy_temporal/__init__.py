@@ -38,7 +38,7 @@ from .models import (
 from .registry import ProgramRegistry, default_registry, register_program
 from .worker import build_worker
 
-__all__ = [
+__all__ = [  # noqa: RUF022 -- grouped by concern with section comments, not alphabetized
     "__version__",
     # auto-wrap API
     "deploy_module",

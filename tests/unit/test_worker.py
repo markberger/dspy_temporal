@@ -42,7 +42,9 @@ def test_build_worker_passes_through_explicit_kwargs(monkeypatch):
 
     monkeypatch.setattr(worker_mod, "Worker", FakeWorker)
     sentinel = object()
-    dt.build_worker(object(), config=RunConfig(task_queue="tq"), interceptors=[sentinel])
+    dt.build_worker(
+        object(), config=RunConfig(task_queue="tq"), interceptors=[sentinel]
+    )
     assert captured["interceptors"] == [sentinel]
 
 
@@ -56,5 +58,7 @@ def test_build_worker_respects_caller_workflow_runner(monkeypatch):
 
     monkeypatch.setattr(worker_mod, "Worker", FakeWorker)
     sentinel = object()
-    dt.build_worker(object(), config=RunConfig(task_queue="tq"), workflow_runner=sentinel)
+    dt.build_worker(
+        object(), config=RunConfig(task_queue="tq"), workflow_runner=sentinel
+    )
     assert captured["workflow_runner"] is sentinel

@@ -57,7 +57,11 @@ def test_emits_dual_convention_lm_span(tracer, exporter):
 def test_module_spans_are_chains_and_nested(tracer, exporter):
     _run(tracer)
     spans = _by_name(exporter.get_finished_spans())
-    cot, predict, lm = spans["dspy.module ChainOfThought"], spans["dspy.module Predict"], spans["chat dummy"]
+    cot, predict, lm = (
+        spans["dspy.module ChainOfThought"],
+        spans["dspy.module Predict"],
+        spans["chat dummy"],
+    )
     assert cot.attributes["openinference.span.kind"] == "CHAIN"
     assert predict.attributes["openinference.span.kind"] == "CHAIN"
     # nesting: chat -> Predict -> ChainOfThought(root)
@@ -90,7 +94,9 @@ def test_tool_span_emitted(tracer, exporter):
     cb.on_tool_start("c1", SimpleNamespace(name="search"), {"query": "x"})
     cb.on_tool_end("c1", "a result")
 
-    span = next(s for s in exporter.get_finished_spans() if s.name.startswith("execute_tool"))
+    span = next(
+        s for s in exporter.get_finished_spans() if s.name.startswith("execute_tool")
+    )
     assert span.name == "execute_tool search"
     assert span.attributes["openinference.span.kind"] == "TOOL"
     assert "input.value" in span.attributes
@@ -147,9 +153,11 @@ def test_exception_records_error_status(tracer, exporter):
             raise RuntimeError("boom")
 
     cb = DSPyOTelCallback(tracer=tracer)
-    with pytest.raises(RuntimeError):
-        with dspy.context(lm=BoomLM([{"answer": "x"}]), callbacks=[cb]):
-            dspy.Predict("question -> answer")(question="?")
+    with (
+        pytest.raises(RuntimeError),
+        dspy.context(lm=BoomLM([{"answer": "x"}]), callbacks=[cb]),
+    ):
+        dspy.Predict("question -> answer")(question="?")
 
     lm = next(s for s in exporter.get_finished_spans() if s.name.startswith("chat"))
     assert lm.status.status_code.name == "ERROR"

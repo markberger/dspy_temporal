@@ -1,0 +1,36 @@
+name: lint
+
+# Enforce Ruff on every PR and on pushes to main. Locally the same checks run
+# via the pre-commit hook; this is the server-side gate for contributors who
+# haven't run `pre-commit install`. Ruff's version is single-sourced from
+# uv.lock (the same one `uv run ruff` uses locally) — no separate pin to drift.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    name: Ruff (lint + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv (with cache)
+        # Pinned to a full release SHA — setup-uv does not publish a moving
+        # major tag (e.g. `v8`), and SHA-pinning third-party actions is the
+        # supply-chain-safe form.
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+      - name: Lint
+        run: uv run --frozen --extra dev ruff check
+      - name: Format check
+        run: uv run --frozen --extra dev ruff format --check

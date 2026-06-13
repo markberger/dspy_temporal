@@ -10,7 +10,10 @@ restriction checks. Workflow code itself stays sandboxed.
 
 from __future__ import annotations
 
-from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
+from temporalio.worker.workflow_sandbox import (
+    SandboxedWorkflowRunner,
+    SandboxRestrictions,
+)
 
 # Heavy, I/O-bound modules that are activity-only. Passthrough applies by prefix.
 # `opentelemetry` is included because, when tracing is enabled, the worker

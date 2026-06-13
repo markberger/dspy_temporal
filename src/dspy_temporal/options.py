@@ -46,7 +46,9 @@ class CallOptions(BaseModel):
     initial_interval_seconds: float = 1.0
     backoff_coefficient: float = 2.0
     maximum_interval_seconds: float = 60.0
-    non_retryable_error_types: list[str] = Field(default_factory=lambda: list(DEFAULT_NON_RETRYABLE))
+    non_retryable_error_types: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_NON_RETRYABLE)
+    )
 
     def start_to_close_timeout(self) -> timedelta:
         return timedelta(seconds=self.start_to_close_timeout_seconds)

@@ -1,31 +1,31 @@
-"""Run the fine-mode ReAct agent and print the answer.
+"""Run the two-LM fine-mode program and print the answer + per-LM usage.
 
-Run (with a worker already running):
-    uv run python examples/run_react.py "What's the weather in Tokyo?"
+Run (with a worker already running and OPENROUTER_API_KEY set on the worker):
+    uv run python examples/run_two_lm.py "Why is the sky blue?"
 
-In fine mode the worker runs each LM call and each tool call as its own Temporal
-activity. Check the Temporal UI (http://localhost:8233) to see the separate
-``dspy_lm_call`` / ``dspy_tool_call`` events for a single run; with tracing on,
-Phoenix shows the nested per-call spans.
+In fine mode each predictor's LM call is its own ``dspy_lm_call`` activity, so a
+single run uses *both* bound models -- visible here as two distinct keys in the
+printed ``lm_usage`` (and as two LM spans in the Temporal UI / Phoenix).
 
-As with the coarse starter, set ``OTEL_EXPORTER_OTLP_ENDPOINT`` to originate the
+As with the other starters, set ``OTEL_EXPORTER_OTLP_ENDPOINT`` to originate the
 root span and tie the worker's spans into one trace:
 
     OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \\
-        uv run --extra tracing python examples/run_react.py "Weather in Tokyo?"
+        uv run --extra tracing python examples/run_two_lm.py "Why is the sky blue?"
 """
 
 import asyncio
+import json
 import os
 import sys
 
-from react_program import TASK_QUEUE
+from two_lm_program import TASK_QUEUE
 
 import dspy_temporal as dt
 
 
 async def main() -> None:
-    question = sys.argv[1] if len(sys.argv) > 1 else "What's the weather in Tokyo?"
+    question = sys.argv[1] if len(sys.argv) > 1 else "Why is the sky blue?"
 
     interceptors: list = []
     if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
@@ -40,13 +40,16 @@ async def main() -> None:
     client = await dt.connect(address, interceptors=interceptors)
     prediction = await dt.run_program(
         client,
-        "weather_agent",
+        "two_lm_qa",
         {"question": question},
         task_queue=TASK_QUEUE,
         mode=dt.RunMode.FINE,
     )
+
     print("Q:", question)
     print("A:", prediction.answer)
+    # The proof of the two-LM split: usage is keyed by each predictor's model.
+    print("lm_usage:", json.dumps(prediction.get_lm_usage(), indent=2, default=str))
 
 
 if __name__ == "__main__":

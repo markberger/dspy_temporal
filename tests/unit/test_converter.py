@@ -16,7 +16,9 @@ async def test_connect_forwards_pydantic_converter(monkeypatch):
 
     monkeypatch.setattr(converter.Client, "connect", fake_connect)
 
-    result = await converter.connect("host:1234", namespace="ns", rpc_metadata={"k": "v"})
+    result = await converter.connect(
+        "host:1234", namespace="ns", rpc_metadata={"k": "v"}
+    )
 
     assert result == "CLIENT"
     assert captured["target_host"] == "host:1234"

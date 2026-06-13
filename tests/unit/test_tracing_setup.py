@@ -77,8 +77,14 @@ def test_capture_content_explicit_overrides_env(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "value,expected",
-    [("true", True), ("1", True), ("span_and_event", True), ("false", False), ("no", False)],
+    ("value", "expected"),
+    [
+        ("true", True),
+        ("1", True),
+        ("span_and_event", True),
+        ("false", False),
+        ("no", False),
+    ],
 )
 def test_capture_content_env_values(monkeypatch, value, expected):
     monkeypatch.setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", value)
@@ -86,5 +92,7 @@ def test_capture_content_env_values(monkeypatch, value, expected):
 
 
 def test_capture_content_default_off(monkeypatch):
-    monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
+    monkeypatch.delenv(
+        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False
+    )
     assert resolve_capture_content(None) is False

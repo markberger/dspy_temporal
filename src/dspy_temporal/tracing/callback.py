@@ -42,7 +42,9 @@ class DSPyOTelCallback(BaseCallback):
             self._spans[call_id] = span
         return span
 
-    def _end(self, call_id: str, attributes: dict[str, Any] | None = None, exception=None):
+    def _end(
+        self, call_id: str, attributes: dict[str, Any] | None = None, exception=None
+    ):
         with self._lock:
             span = self._spans.pop(call_id, None)
         if span is None:
@@ -84,9 +86,14 @@ class DSPyOTelCallback(BaseCallback):
     # --- LM (LLM) ----------------------------------------------------------
     def on_lm_start(self, call_id, instance, inputs):
         attrs = semconv.lm_request_attributes(instance)
-        span = self._start(call_id, semconv.lm_span_name(getattr(instance, "model", None)), attrs)
+        span = self._start(
+            call_id, semconv.lm_span_name(getattr(instance, "model", None)), attrs
+        )
         with self._lock:
-            self._lm_history[call_id] = (instance, len(getattr(instance, "history", []) or []))
+            self._lm_history[call_id] = (
+                instance,
+                len(getattr(instance, "history", []) or []),
+            )
         if self._capture_content:
             messages = inputs.get("messages") or inputs.get("prompt")
             if messages is not None:
@@ -128,6 +135,6 @@ def _to_jsonable(obj: Any) -> Any:
     if hasattr(obj, "toDict"):
         try:
             return obj.toDict()
-        except Exception:  # pragma: no cover - defensive
+        except Exception:  # noqa: S110  # pragma: no cover - intentional fallback below
             pass
     return obj

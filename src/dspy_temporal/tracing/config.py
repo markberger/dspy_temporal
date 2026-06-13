@@ -30,7 +30,9 @@ def build_tracer_provider(service_name: str, exporter=None):
 
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
     if exporter is None:  # pragma: no cover - real OTLP exporter needs a backend
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+            OTLPSpanExporter,
+        )
 
         exporter = OTLPSpanExporter()
     provider.add_span_processor(BatchSpanProcessor(exporter))

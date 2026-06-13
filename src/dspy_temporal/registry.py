@@ -8,7 +8,7 @@ owns the registry and reconstructs a fresh module on demand via its builder.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import dspy
 

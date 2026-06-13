@@ -22,7 +22,9 @@ class FakeClient:
         self.calls = []
 
     async def execute_workflow(self, run, call, *, id, task_queue):
-        self.calls.append({"run": run, "call": call, "id": id, "task_queue": task_queue})
+        self.calls.append(
+            {"run": run, "call": call, "id": id, "task_queue": task_queue}
+        )
         return ProgramCallOutput(prediction={"answer": "blue"})
 
 

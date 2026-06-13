@@ -22,12 +22,16 @@ def test_default_factory_lists_are_independent():
 
 
 def test_start_to_close_timeout_conversion():
-    assert CallOptions(start_to_close_timeout_seconds=12).start_to_close_timeout() == timedelta(seconds=12)
+    assert CallOptions(
+        start_to_close_timeout_seconds=12
+    ).start_to_close_timeout() == timedelta(seconds=12)
 
 
 def test_heartbeat_timeout_none_and_value():
     assert CallOptions().heartbeat_timeout() is None
-    assert CallOptions(heartbeat_timeout_seconds=5).heartbeat_timeout() == timedelta(seconds=5)
+    assert CallOptions(heartbeat_timeout_seconds=5).heartbeat_timeout() == timedelta(
+        seconds=5
+    )
 
 
 def test_retry_policy_maps_all_fields():

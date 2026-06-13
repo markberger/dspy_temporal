@@ -62,7 +62,8 @@ async def test_activity_span_parents_dspy_spans(otel, dummy_lm):
     lm = by_name["chat dummy"]
 
     # Root dspy span parents to the activity span -> one unified trace.
-    assert cot.parent is not None and cot.parent.span_id in activity_ids
+    assert cot.parent is not None
+    assert cot.parent.span_id in activity_ids
     assert lm.context.trace_id == cot.context.trace_id
     # gen_ai + OpenInference attributes survived the Temporal boundary.
     assert lm.attributes["gen_ai.request.model"] == "dummy"

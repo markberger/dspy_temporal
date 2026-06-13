@@ -19,13 +19,15 @@ Run:
 import asyncio
 import os
 
-import dspy_temporal as dt
-
 # Importing these registers the program builders in the process registry:
 #   - qa_program       -> "qa" (coarse mode)
 #   - react_program    -> "weather_agent" (fine mode; per-LM/per-tool activities)
-import react_program  # noqa: E402,F401  (import registers "weather_agent")
-from qa_program import TASK_QUEUE  # noqa: E402
+#   - two_lm_program   -> "two_lm_qa" (fine mode; per-predictor multi-LM)
+import react_program  # noqa: F401  (import registers "weather_agent")
+import two_lm_program  # noqa: F401  (import registers "two_lm_qa")
+from qa_program import TASK_QUEUE
+
+import dspy_temporal as dt
 
 
 async def _connect_with_retry(address: str, *, interceptors, attempts: int = 30):
@@ -38,7 +40,7 @@ async def _connect_with_retry(address: str, *, interceptors, attempts: int = 30)
     for _ in range(attempts):
         try:
             return await dt.connect(address, interceptors=interceptors)
-        except Exception as exc:  # noqa: BLE001 - retry any connect failure
+        except Exception as exc:  # retry any connect failure
             last_exc = exc
             await asyncio.sleep(1)
     raise RuntimeError(f"Could not connect to Temporal at {address}") from last_exc
@@ -55,12 +57,16 @@ async def main() -> None:
         # Registers the DSPy span-emitting callback (worker side) and returns the
         # Temporal interceptor to attach to the client.
         interceptors.append(setup_tracing(service_name="dspy-temporal-worker"))
-        print("Tracing enabled -> exporting to", os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"])
+        print(
+            "Tracing enabled -> exporting to", os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]
+        )
 
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     client = await _connect_with_retry(address, interceptors=interceptors)
     worker = dt.build_worker(client, config=dt.RunConfig(task_queue=TASK_QUEUE))
-    print(f"Worker running on task queue {TASK_QUEUE!r} (Temporal at {address}). Ctrl-C to exit.")
+    print(
+        f"Worker running on task queue {TASK_QUEUE!r} (Temporal at {address}). Ctrl-C to exit."
+    )
     await worker.run()
 
 

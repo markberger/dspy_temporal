@@ -3,4 +3,4 @@
 from .activities import run_program_activity
 from .workflow import DSPyProgramWorkflow
 
-__all__ = ["run_program_activity", "DSPyProgramWorkflow"]
+__all__ = ["DSPyProgramWorkflow", "run_program_activity"]

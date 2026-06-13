@@ -202,6 +202,27 @@ from its environment; it enables tracing automatically when an OTLP endpoint is 
 The Temporal dev server uses an in-memory store, so workflow history resets when the
 stack restarts.
 
+## Formatting
+
+Code is formatted and imports sorted with [Ruff](https://docs.astral.sh/ruff/),
+configured in `pyproject.toml` (`[tool.ruff]`). After `uv sync --extra dev`, enable the
+git hook once so formatting runs automatically on every commit:
+
+```bash
+uv run pre-commit install
+```
+
+Run it by hand anytime:
+
+```bash
+uv run ruff format .                     # format
+uv run ruff check --select I --fix .     # sort imports
+uv run pre-commit run --all-files        # both hooks over the whole repo
+```
+
+In editors, the [Ruff extension](https://docs.astral.sh/ruff/editors/) gives
+format-on-save with the same config.
+
 ## Tests
 
 ```bash
