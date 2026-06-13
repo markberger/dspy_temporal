@@ -20,7 +20,7 @@ place so the cost is bounded. Tracing is an **optional extra**, off by default,
    DSPy's `dspy.settings.callbacks` (`BaseCallback`) and Temporal's
    `interceptors=` API. We explicitly reject `openinference-instrumentation-dspy`
    — it `wrapt`-patches `dspy.LM.__call__`/`Predict.forward`, which our fine-mode
-   `TemporalLM` will replace (→ no-op or double-count), and it records **no token
+   `WorkflowLM` replaces (→ no-op or double-count), and it records **no token
    usage**. We emit OpenInference attributes ourselves, better.
 2. **Tracing can never break a run.** DSPy swallows callback exceptions
    (`callback.py:271,283`); span emission lives only in callbacks/activities.
@@ -107,8 +107,10 @@ read the new entries in `on_lm_end` via the stored instance). Consequences:
   call (`len(new_entries) == 1`); otherwise we omit the response attributes rather
   than risk reporting the wrong call's tokens. The result is "missing under
   contention" instead of "wrong under contention" — the safer failure for a
-  billing/observability signal. **Fine mode fixes this entirely**: each LM call is
-  its own activity with its own isolated span.
+  billing/observability signal. **Fine mode (shipped) fixes this entirely**: each
+  LM call is its own activity running on an isolated `worker_lm.copy()`, so exactly
+  one entry is appended to *that copy's* history and the response attributes are
+  always attributed correctly.
 
 ## Temporal boundary: context propagation
 
@@ -236,8 +238,13 @@ exporter, returns the interceptor for `connect()`, and registers the callback.
   No context-copying executor needed (spike showed the default works).
 - **B:** content capture (dual-emit, opt-in), tool/adapter spans, cost, metrics
   (`gen_ai.client.token.usage` histograms).
-- **C:** fine mode — per-LM-call activity spans, workflow-as-parent; no span
-  emission in workflow code.
+- **C (SHIPPED):** fine mode — per-LM-call (and per-tool-call) activity spans,
+  workflow-as-parent; no span emission in workflow code (the workflow runs the
+  module with `callbacks=[]`; spans are emitted only inside the activities). Each
+  LM call runs on an isolated `worker_lm.copy()`, so its `history[-1]` is
+  unambiguous and the usage/cost/model attributes are always attributed — the
+  concurrency wrinkle above does not apply. See `src/dspy_temporal/fine/` and
+  `tests/integration/test_fine_tracing_workflow.py`.
 
 ## Open question for later
 

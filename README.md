@@ -8,9 +8,12 @@ workflows — with retries, timeouts, and observability — without writing Temp
 - **Coarse mode (shipped):** a whole `dspy.Module` runs inside one Temporal activity. DSPy
   is fully intact (adapters, caching, retries). Durability is job-level: a crash re-runs the
   program. This is the low-friction "just deploy it" path.
-- **Fine-grained mode (planned):** each LM call (and ReAct tool call) becomes its own
-  activity with orchestration in the workflow, so long/agentic runs resume from the last
-  completed step. See the design plan.
+- **Fine-grained mode (shipped):** each LM call (and ReAct tool call) becomes its own
+  activity, with the program's orchestration running in the workflow. Completed LM/tool
+  calls are recorded in Temporal history, so long/agentic runs resume from the last
+  completed step instead of re-calling the model, and each LM call gets an isolated span
+  (no token-attribution ambiguity under concurrency). Opt in with `RunConfig(mode=RunMode.FINE)`.
+  See [Fine-grained mode](#fine-grained-mode) for usage and limits.
 
 ## How it works
 
@@ -73,6 +76,63 @@ export OPENAI_API_KEY=sk-...
 
 A runnable example lives in `examples/` (`qa_program.py`, `worker.py`, `run.py`).
 
+## Fine-grained mode
+
+Coarse mode runs the whole program in one activity. **Fine mode** instead runs the
+program's *orchestration* in the workflow and turns each LM call and each tool call into
+its own activity. The payoff:
+
+- **Durable resume:** a completed LM/tool call is in Temporal history, so a crash + replay
+  resumes from the last finished step — no duplicate model spend, and long agentic runs
+  survive restarts.
+- **Per-call tracing:** each LM call runs on an isolated LM copy and emits its own span
+  with correct `gen_ai.usage.*` tokens (the coarse shared-history attribution caveat is gone).
+
+Opt in per program with `RunConfig(mode=RunMode.FINE)`. Tools are ordinary Python functions you
+hand to `dspy.ReAct` in the builder — there is no fine-mode-specific tool API:
+
+```python
+import dspy
+import dspy_temporal as dt
+
+def get_weather(city: str) -> str:
+    """Return a weather report for a city."""   # body runs in an activity → real I/O is fine
+    return f"The weather in {city} is sunny."
+
+def build_agent() -> dspy.Module:
+    # The builder runs in the WORKFLOW: only construct dspy objects here — no network/file/DB.
+    return dspy.ReAct("question -> answer", tools=[get_weather])
+
+agent = dt.deploy_module("weather_agent", build_agent,
+                         config=dt.RunConfig(task_queue="dspy-temporal", mode=dt.RunMode.FINE))
+```
+
+The same worker serves both modes (it registers both workflows and all activities), so no
+worker change is needed. Run it the usual way — `run_program(..., mode=RunMode.FINE)` or
+`agent.execute(client, {...})`. In the Temporal UI you'll see distinct `dspy_lm_call` /
+`dspy_tool_call` activities per run. A runnable example is in `examples/`
+(`react_program.py`, `run_react.py`).
+
+**Where each piece runs:** the tool *bodies* and the LM HTTP calls run in activities (real
+I/O allowed); the builder, the ReAct loop, and adapter format/parse run in the workflow as
+deterministic Python. Tool args arrive JSON-native and are coerced to the annotated types;
+tool return values are JSON-ified, so tools should return JSON-native data or pydantic
+models (not live handles). Both sync and async tool functions work.
+
+**Limitations (v1) — use coarse mode if you need these):**
+
+1. **Single worker LM** — all predictors route to the one worker-configured LM;
+   per-predictor multi-LM programs aren't honored.
+2. **ChatAdapter only** — `JSONAdapter` / a structured `response_format` (a pydantic class
+   in the sampling kwargs) doesn't cross the activity boundary yet (it's dropped).
+3. **Sequential async only** — programs that fan out internally (`dspy.Parallel`, threads,
+   `asyncio.gather`) aren't supported in the workflow.
+4. **No ReAct context-window-truncation fallback** — a `ContextWindowExceededError` becomes
+   a Temporal `ActivityError` across the boundary, so ReAct's truncate-and-retry won't
+   trigger in v1.
+5. **Tools resolved via `program.tools`** — covers ReAct and any module exposing a `.tools`
+   dict; a custom tool-calling module without `.tools` isn't supported yet.
+
 ## Tracing (optional)
 
 Capture LLM traces with OpenTelemetry — dual-emitted as both **gen_ai** semantic
@@ -94,11 +154,15 @@ worker = dt.build_worker(client, config=dt.RunConfig(task_queue="dspy-temporal")
 await worker.run()
 ```
 
-You get one trace per run: `Workflow → Activity → dspy.module → chat <model>`, with
-token usage, model, finish reasons, and cost on the LM spans. Prompt/completion
-**content is off by default**; enable it with `setup_tracing(capture_content=True)`
-or `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`. Register the interceptor on
-the **client only** — adding it to the worker too double-emits spans.
+You get one trace per run. In **coarse** mode: `Workflow → Activity → dspy.module →
+chat <model>`. In **fine** mode the span tree follows the per-call activities:
+`Workflow → dspy_lm_call activity → chat <model>` for each LM call and
+`Workflow → dspy_tool_call activity → execute_tool <name>` for each tool call (no
+`dspy.module` span — the module orchestrates in the workflow). Either way LM spans carry
+token usage, model, finish reasons, and cost. Prompt/completion **content is off by
+default**; enable it with `setup_tracing(capture_content=True)` or
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`. Register the interceptor on the
+**client only** — adding it to the worker too double-emits spans.
 
 ## Run locally with Docker Compose (Phoenix tracing)
 

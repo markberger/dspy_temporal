@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from dspy_temporal.serde import (
     _jsonify,
     dict_to_prediction,
+    json_safe,
     normalize_inputs,
     prediction_to_dict,
 )
@@ -82,3 +83,21 @@ def test_jsonify_handles_a_raw_prediction():
     # _jsonify is a reusable helper; it must convert a Prediction directly even
     # though prediction_to_dict's toDict() normally pre-flattens nested ones.
     assert _jsonify(dspy.Prediction(answer="42")) == {"answer": "42"}
+
+
+def test_json_safe_keeps_primitives_and_stringifies_keys():
+    # The ChatAdapter case: every LM sampling kwarg is a JSON primitive, so all
+    # survive (and keys are coerced to str).
+    out = json_safe({"temperature": 0.7, "max_tokens": 256, 1: "x"})
+    json.dumps(out)
+    assert out == {"temperature": 0.7, "max_tokens": 256, "1": "x"}
+
+
+def test_json_safe_drops_non_serializable_values():
+    # The JSONAdapter case (documented fine-mode limitation): a pydantic
+    # response_format *class* can't cross the activity boundary, so it is dropped
+    # (degrades to the default) rather than corrupting the call.
+    out = json_safe({"temperature": 0.0, "response_format": _Meta})
+    json.dumps(out)
+    assert out == {"temperature": 0.0}
+    assert "response_format" not in out
