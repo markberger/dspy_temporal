@@ -68,12 +68,11 @@ def normalize_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
 def json_safe(kwargs: dict[str, Any]) -> dict[str, Any]:
     """Keep only the entries that round-trip cleanly through JSON.
 
-    Fine mode ships LM sampling kwargs and tool args across the activity
-    boundary. Values that JSON can't represent are *dropped* (not stringified)
-    so an unsupported kwarg degrades to its default rather than corrupting the
-    call -- e.g. ``JSONAdapter``'s pydantic ``response_format`` class is omitted
-    (documented limitation) instead of being coerced into a bogus string. For
-    the default ``ChatAdapter`` every kwarg is a primitive, so nothing is lost.
+    Used for tool args and for filtering an LM's ``kwargs`` into an ``LMSpec``.
+    Values that JSON can't represent are *dropped* (not stringified) so an
+    unsupported value degrades to its default rather than corrupting the call.
+    (For LM *sampling* kwargs on the call path, use ``encode_lm_kwargs`` instead,
+    which additionally carries a structured ``response_format`` across.)
     """
     safe: dict[str, Any] = {}
     for key, value in kwargs.items():
@@ -83,3 +82,72 @@ def json_safe(kwargs: dict[str, Any]) -> dict[str, Any]:
             continue
         safe[str(key)] = value
     return safe
+
+
+# Marker key for a structured ``response_format`` (a pydantic model *class*) that
+# can't be JSON-serialized directly. ``encode_lm_kwargs`` replaces the class with
+# this marker carrying its JSON schema; ``decode_lm_kwargs`` rebuilds the
+# litellm/OpenAI ``json_schema`` dict the worker LM accepts.
+_RESPONSE_FORMAT_MARKER = "__dspy_temporal_response_format__"
+
+
+def encode_lm_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Encode LM sampling kwargs for the activity boundary (workflow side).
+
+    Like ``json_safe`` (non-JSON values are dropped), but a structured
+    ``response_format`` -- the pydantic model *class* ``JSONAdapter`` builds from
+    the signature -- is preserved as a marker carrying its JSON schema instead of
+    being dropped. ``{"type": "json_object"}`` and primitive kwargs pass through
+    untouched. This is what lets ``JSONAdapter``/structured outputs cross into the
+    activity (the class itself isn't JSON-serializable).
+    """
+    out: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if (
+            key == "response_format"
+            and isinstance(value, type)
+            and issubclass(value, BaseModel)
+        ):
+            out[key] = {
+                _RESPONSE_FORMAT_MARKER: {
+                    "name": value.__name__,
+                    "json_schema": value.model_json_schema(),
+                }
+            }
+            continue
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError):
+            continue
+        out[str(key)] = value
+    return out
+
+
+def decode_lm_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Decode encoded LM sampling kwargs in the activity (worker side).
+
+    Turns a ``response_format`` marker back into the litellm/OpenAI
+    ``{"type": "json_schema", "json_schema": {...}}`` form -- which litellm
+    accepts directly -- so we avoid reconstructing a pydantic class. Nothing
+    downstream of the LM call needs the class: ``JSONAdapter.parse`` (run in the
+    workflow) uses only the signature's output fields.
+    """
+    out: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if (
+            key == "response_format"
+            and isinstance(value, dict)
+            and _RESPONSE_FORMAT_MARKER in value
+        ):
+            marker = value[_RESPONSE_FORMAT_MARKER]
+            out[key] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": marker["name"],
+                    "schema": marker["json_schema"],
+                    "strict": True,
+                },
+            }
+        else:
+            out[key] = value
+    return out

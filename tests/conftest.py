@@ -15,6 +15,8 @@ from dspy_temporal.registry import ProgramRegistry
 @pytest.fixture(autouse=True)
 def reset_worker_lm():
     """Snapshot/restore worker LM + tracing callback around each test."""
+    from dspy_temporal.fine.activities import clear_lm_map_cache
+
     saved_lm = config_mod.get_worker_lm()
     saved_cb = config_mod.get_tracing_callback()
     try:
@@ -22,6 +24,9 @@ def reset_worker_lm():
     finally:
         config_mod._WORKER_LM = saved_lm
         config_mod._TRACING_CALLBACK = saved_cb
+        # The per-program LM map is process-global; drop it so a program name
+        # reused across tests with a different builder doesn't see a stale map.
+        clear_lm_map_cache()
 
 
 @pytest.fixture

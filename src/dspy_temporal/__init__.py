@@ -18,11 +18,18 @@ from .config import (
     set_worker_lm,
 )
 from .converter import connect, data_converter
-from .fine.activities import lm_call_activity, tool_call_activity
+from .fine.activities import (
+    describe_lms_activity,
+    lm_call_activity,
+    tool_call_activity,
+)
 from .fine.workflow import DSPyProgramFineWorkflow
 from .models import (
     LMCallInput,
     LMCallOutput,
+    LMDescribeInput,
+    LMSpec,
+    LMSpecsOutput,
     ProgramCallInput,
     ProgramCallOutput,
     ToolCallInput,
@@ -54,6 +61,9 @@ __all__ = [
     "ProgramCallOutput",
     "LMCallInput",
     "LMCallOutput",
+    "LMSpec",
+    "LMDescribeInput",
+    "LMSpecsOutput",
     "ToolCallInput",
     "ToolCallOutput",
     "ProgramRegistry",
@@ -63,6 +73,7 @@ __all__ = [
     "run_program_activity",
     # fine mode
     "DSPyProgramFineWorkflow",
+    "describe_lms_activity",
     "lm_call_activity",
     "tool_call_activity",
 ]

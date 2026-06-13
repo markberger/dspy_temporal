@@ -119,18 +119,24 @@ deterministic Python. Tool args arrive JSON-native and are coerced to the annota
 tool return values are JSON-ified, so tools should return JSON-native data or pydantic
 models (not live handles). Both sync and async tool functions work.
 
-**Limitations (v1) — use coarse mode if you need these):**
+**Multiple LMs and structured outputs (supported):**
 
-1. **Single worker LM** — all predictors route to the one worker-configured LM;
-   per-predictor multi-LM programs aren't honored.
-2. **ChatAdapter only** — `JSONAdapter` / a structured `response_format` (a pydantic class
-   in the sampling kwargs) doesn't cross the activity boundary yet (it's dropped).
-3. **Sequential async only** — programs that fan out internally (`dspy.Parallel`, threads,
+- **Per-predictor LMs** — bind a predictor's own `.lm` in the builder
+  (`self.summarize.lm = dspy.LM("openai/gpt-4o")`); the worker resolves each predictor's LM
+  by name. A one-shot `dspy_describe_lms` activity carries each LM's model + capabilities to
+  the workflow up front (so JSONAdapter branches correctly), and the LM/credentials stay on
+  the worker — only a description crosses the wire.
+- **JSONAdapter / structured outputs** — a structured `response_format` (the pydantic class
+  `JSONAdapter` builds from the signature) now crosses the boundary as its JSON schema.
+  Configure the adapter on the worker once: `dspy.configure(adapter=dspy.JSONAdapter())`.
+
+**Limitations (use coarse mode if you need these):**
+
+1. **Sequential async only** — programs that fan out internally (`dspy.Parallel`, threads,
    `asyncio.gather`) aren't supported in the workflow.
-4. **No ReAct context-window-truncation fallback** — a `ContextWindowExceededError` becomes
-   a Temporal `ActivityError` across the boundary, so ReAct's truncate-and-retry won't
-   trigger in v1.
-5. **Tools resolved via `program.tools`** — covers ReAct and any module exposing a `.tools`
+2. **No ReAct context-window-truncation fallback** — a `ContextWindowExceededError` becomes
+   a Temporal `ActivityError` across the boundary, so ReAct's truncate-and-retry won't trigger.
+3. **Tools resolved via `program.tools`** — covers ReAct and any module exposing a `.tools`
    dict; a custom tool-calling module without `.tools` isn't supported yet.
 
 ## Tracing (optional)

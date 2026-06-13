@@ -10,7 +10,7 @@ from temporalio.worker import Worker
 from .coarse.activities import run_program_activity
 from .coarse.workflow import DSPyProgramWorkflow
 from .config import RunConfig
-from .fine.activities import lm_call_activity, tool_call_activity
+from .fine.activities import describe_lms_activity, lm_call_activity, tool_call_activity
 from .fine.workflow import DSPyProgramFineWorkflow
 from .sandbox import default_workflow_runner
 
@@ -43,7 +43,12 @@ def build_worker(
         client,
         task_queue=config.task_queue,
         workflows=[DSPyProgramWorkflow, DSPyProgramFineWorkflow],
-        activities=[run_program_activity, lm_call_activity, tool_call_activity],
+        activities=[
+            run_program_activity,
+            describe_lms_activity,
+            lm_call_activity,
+            tool_call_activity,
+        ],
         activity_executor=ThreadPoolExecutor(max_workers=max_concurrent_activities),
         **worker_kwargs,
     )

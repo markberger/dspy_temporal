@@ -7,7 +7,9 @@ from pydantic import BaseModel
 
 from dspy_temporal.serde import (
     _jsonify,
+    decode_lm_kwargs,
     dict_to_prediction,
+    encode_lm_kwargs,
     json_safe,
     normalize_inputs,
     prediction_to_dict,
@@ -94,10 +96,51 @@ def test_json_safe_keeps_primitives_and_stringifies_keys():
 
 
 def test_json_safe_drops_non_serializable_values():
-    # The JSONAdapter case (documented fine-mode limitation): a pydantic
-    # response_format *class* can't cross the activity boundary, so it is dropped
-    # (degrades to the default) rather than corrupting the call.
+    # json_safe backs tool args and the LMSpec.kwargs filter: a value JSON can't
+    # represent (here a pydantic *class*) is dropped rather than corrupting the
+    # payload. (LM sampling kwargs use encode_lm_kwargs, which instead *carries* a
+    # structured response_format across -- see below.)
     out = json_safe({"temperature": 0.0, "response_format": _Meta})
     json.dumps(out)
     assert out == {"temperature": 0.0}
     assert "response_format" not in out
+
+
+# --- LM-kwargs codec (encode_lm_kwargs / decode_lm_kwargs) -------------------
+
+
+def test_encode_lm_kwargs_passes_through_primitives_and_json_object():
+    # ChatAdapter primitives and the JSONAdapter json_object fallback are already
+    # JSON-native, so they cross untouched.
+    out = encode_lm_kwargs({"temperature": 0.0, "response_format": {"type": "json_object"}})
+    json.dumps(out)
+    assert out == {"temperature": 0.0, "response_format": {"type": "json_object"}}
+
+
+def test_encode_lm_kwargs_carries_structured_response_format():
+    # The JSONAdapter structured-output case: the pydantic response_format *class*
+    # is now carried (as a schema marker) instead of dropped.
+    out = encode_lm_kwargs({"response_format": _Meta})
+    json.dumps(out)  # JSON-native now
+    marker = out["response_format"]["__dspy_temporal_response_format__"]
+    assert marker["name"] == "_Meta"
+    assert marker["json_schema"] == _Meta.model_json_schema()
+
+
+def test_encode_lm_kwargs_drops_other_non_json():
+    out = encode_lm_kwargs({"temperature": 0.0, "weird": lambda: 1})  # noqa: E731
+    assert out == {"temperature": 0.0}
+
+
+def test_decode_lm_kwargs_rebuilds_litellm_json_schema():
+    decoded = decode_lm_kwargs(encode_lm_kwargs({"response_format": _Meta}))
+    rf = decoded["response_format"]
+    assert rf["type"] == "json_schema"
+    assert rf["json_schema"]["name"] == "_Meta"
+    assert rf["json_schema"]["schema"] == _Meta.model_json_schema()
+    assert rf["json_schema"]["strict"] is True
+
+
+def test_decode_lm_kwargs_passes_through_plain_values():
+    decoded = decode_lm_kwargs({"temperature": 0.0, "response_format": {"type": "json_object"}})
+    assert decoded == {"temperature": 0.0, "response_format": {"type": "json_object"}}

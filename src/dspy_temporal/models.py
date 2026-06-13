@@ -34,14 +34,53 @@ class ProgramCallOutput(BaseModel):
 # the activity runs the real DSPy I/O and returns the output.
 
 
+class LMSpec(BaseModel):
+    """A predictor's *effective* LM, described on the worker for the workflow.
+
+    The fine workflow needs each predictor's model id, capability flags, and
+    sampling kwargs *before* it dispatches the first LM call: ``JSONAdapter``
+    branches on ``supports_response_schema`` / ``supported_params`` and
+    ``Predict._forward_preprocess`` derives config from ``lm.kwargs`` -- both in
+    the workflow. ``WorkflowLM`` carries this spec so those decisions match the
+    real worker LM. All fields are JSON-native (no credentials: ``kwargs`` is
+    filtered worker-side; api keys are read from env at call time in the activity).
+    """
+
+    model: str
+    model_type: str = "chat"
+    supported_params: list[str] = Field(default_factory=list)
+    supports_response_schema: bool = False
+    supports_function_calling: bool = False
+    kwargs: dict[str, Any] = Field(default_factory=dict)
+
+
+class LMDescribeInput(BaseModel):
+    """Input to ``dspy_describe_lms``: which program to introspect."""
+
+    program: str
+
+
+class LMSpecsOutput(BaseModel):
+    """Per-predictor ``LMSpec`` map (plus a ``"__default__"`` worker-LM entry)."""
+
+    specs: dict[str, LMSpec] = Field(default_factory=dict)
+
+
 class LMCallInput(BaseModel):
     """One LM call delegated from the workflow to ``dspy_lm_call``."""
 
     prompt: str | None = None
     messages: list[dict[str, Any]] | None = None
-    # JSON-safe sampling kwargs (temperature, max_tokens, ...). The workflow
-    # strips anything non-serializable before sending (see ``serde.json_safe``).
+    # Sampling kwargs (temperature, max_tokens, response_format, ...) encoded for
+    # the wire by ``serde.encode_lm_kwargs`` and decoded in the activity.
     lm_kwargs: dict[str, Any] = Field(default_factory=dict)
+    # Which predictor's LM to run (a name from ``named_predictors()``); None or
+    # ``"__default__"`` -> the worker default LM. Lets the activity honor a
+    # per-predictor bound ``.lm`` without sending any LM/credentials over the wire.
+    lm_ref: str | None = None
+    # The program name, so the activity can resolve ``lm_ref`` -> a real LM via
+    # the registry (cached). None keeps the old worker-default behavior.
+    program: str | None = None
 
 
 class LMCallOutput(BaseModel):
