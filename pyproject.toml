@@ -53,6 +53,12 @@ select = [
     "RET",  # flake8-return — return-statement consistency
     "UP",   # pyupgrade — modern syntax (target py310, from requires-python)
     "RUF",  # Ruff-native rules (incl. RUF022 sorted __all__)
+    # Tier 2: idioms + security.
+    "PT",   # flake8-pytest-style — consistent fixtures/parametrize/raises
+    "FA",   # flake8-future-annotations — flag missing `from __future__ import annotations`
+    "G",    # flake8-logging-format — no f-strings/%-format in logging calls
+    "ICN",  # flake8-import-conventions — conventional aliases
+    "S",    # flake8-bandit — security checks
 ]
 
 # Scoped relaxations for the rule groups the later tiers introduce: bandit (S)
@@ -63,6 +69,9 @@ select = [
 "tests/**" = ["S101", "ANN"]
 # Examples are runnable teaching scripts: loose typing is expected.
 "examples/**" = ["ANN"]
+# Semantic-convention attribute-name constants (e.g. "llm.token_count.prompt").
+# Bandit reads the "TOKEN"-named constants as hardcoded secrets — false positive.
+"src/dspy_temporal/tracing/semconv.py" = ["S105"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

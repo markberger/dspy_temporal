@@ -160,7 +160,8 @@ async def test_fine_json_adapter_structured_output():
     # The structured response_format crossed the boundary and was decoded into
     # the litellm json_schema form (it would be absent if it had been dropped).
     rf = _RF_SEEN.get("response_format")
-    assert rf is not None and rf["type"] == "json_schema"
+    assert rf is not None
+    assert rf["type"] == "json_schema"
     assert "answer" in rf["json_schema"]["schema"]["properties"]
 
 

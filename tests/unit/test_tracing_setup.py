@@ -77,7 +77,7 @@ def test_capture_content_explicit_overrides_env(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "value,expected",
+    ("value", "expected"),
     [
         ("true", True),
         ("1", True),

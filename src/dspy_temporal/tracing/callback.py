@@ -135,6 +135,6 @@ def _to_jsonable(obj: Any) -> Any:
     if hasattr(obj, "toDict"):
         try:
             return obj.toDict()
-        except Exception:  # pragma: no cover - defensive
+        except Exception:  # noqa: S110  # pragma: no cover - intentional fallback below
             pass
     return obj

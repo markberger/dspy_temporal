@@ -93,7 +93,8 @@ async def test_fine_lm_span_parents_to_its_activity_with_usage(tracing, dummy_lm
 
     lm_activity_ids = _activity_span_ids(spans, "dspy_lm_call")
     assert lm_activity_ids, "no dspy_lm_call activity span"
-    assert lm.parent is not None and lm.parent.span_id in lm_activity_ids
+    assert lm.parent is not None
+    assert lm.parent.span_id in lm_activity_ids
 
     # Per-call usage attribution -- present on the span (the coarse concurrency
     # caveat is gone: the isolated lm.copy() has a single, unambiguous entry).
@@ -136,7 +137,8 @@ async def test_fine_react_emits_lm_and_tool_spans_per_activity(tracing, fine_rea
     # Each LM span parents to a dspy_lm_call activity, and each carries its own
     # usage (isolated copies -> unambiguous per-call attribution).
     for lm in lm_spans:
-        assert lm.parent is not None and lm.parent.span_id in lm_activity_ids
+        assert lm.parent is not None
+        assert lm.parent.span_id in lm_activity_ids
         assert lm.attributes["gen_ai.usage.total_tokens"] == 3
 
     # The single tool call emits an execute_tool span from the tool activity.
@@ -145,7 +147,8 @@ async def test_fine_react_emits_lm_and_tool_spans_per_activity(tracing, fine_rea
     tool = tool_spans[0]
     tool_activity_ids = _activity_span_ids(spans, "dspy_tool_call")
     assert tool_activity_ids, "no dspy_tool_call activity span"
-    assert tool.parent is not None and tool.parent.span_id in tool_activity_ids
+    assert tool.parent is not None
+    assert tool.parent.span_id in tool_activity_ids
     assert tool.attributes["openinference.span.kind"] == "TOOL"
 
     # No module/orchestration span -- all spans came from activities.

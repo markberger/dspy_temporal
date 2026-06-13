@@ -31,7 +31,7 @@ def _jsonify(value: Any) -> Any:
     if hasattr(value, "model_dump"):  # pydantic-like without subclassing BaseModel
         try:
             return value.model_dump(mode="json")
-        except Exception:  # pragma: no cover - defensive
+        except Exception:  # noqa: S110  # pragma: no cover - intentional fallback below
             pass
     # Fallback: stringify so serialization never hard-fails on an exotic type.
     return str(value)
