@@ -24,7 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install uv (with cache)
-        uses: astral-sh/setup-uv@v8
+        # Pinned to a full release SHA — setup-uv does not publish a moving
+        # major tag (e.g. `v8`), and SHA-pinning third-party actions is the
+        # supply-chain-safe form.
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: true
       - name: Lint
