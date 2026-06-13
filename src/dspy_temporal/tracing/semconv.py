@@ -96,7 +96,9 @@ def lm_request_attributes(instance: Any) -> dict[str, Any]:
     if kwargs.get("top_p") is not None:
         attrs[GEN_AI_REQUEST_TOP_P] = kwargs["top_p"]
 
-    params = {k: v for k, v in kwargs.items() if not k.startswith("api") and v is not None}
+    params = {
+        k: v for k, v in kwargs.items() if not k.startswith("api") and v is not None
+    }
     if params:
         attrs[LLM_INVOCATION_PARAMETERS] = safe_json(params)
     return attrs
@@ -104,7 +106,11 @@ def lm_request_attributes(instance: Any) -> dict[str, Any]:
 
 def _finish_reasons(response: Any) -> list[str] | None:
     try:
-        reasons = [c.finish_reason for c in response.choices if getattr(c, "finish_reason", None)]
+        reasons = [
+            c.finish_reason
+            for c in response.choices
+            if getattr(c, "finish_reason", None)
+        ]
     except Exception:
         return None
     return reasons or None

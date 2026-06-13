@@ -31,7 +31,9 @@ TOOL_ACTIVITY_NAME = "dspy_tool_call"
 class WorkflowTool(dspy.Tool):
     """A ``dspy.Tool`` whose call runs in a ``dspy_tool_call`` activity."""
 
-    def __init__(self, original: dspy.Tool, *, program: str, options: CallOptions | None = None):
+    def __init__(
+        self, original: dspy.Tool, *, program: str, options: CallOptions | None = None
+    ):
         super().__init__(
             func=original.func,
             name=original.name,

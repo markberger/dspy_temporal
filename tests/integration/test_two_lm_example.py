@@ -45,7 +45,9 @@ class _NamedDummyLM(DummyLM):
 def test_example_binds_two_distinct_models(two_lm_example):
     """The example wires a *different* LM onto each predictor."""
     program = two_lm_example.TwoLMQA()
-    models = {p.lm.model for _, p in program.named_predictors() if getattr(p, "lm", None)}
+    models = {
+        p.lm.model for _, p in program.named_predictors() if getattr(p, "lm", None)
+    }
     assert models == {two_lm_example.DRAFT_MODEL, two_lm_example.REFINE_MODEL}
     assert two_lm_example.DRAFT_MODEL != two_lm_example.REFINE_MODEL
 
@@ -63,7 +65,9 @@ async def test_two_lm_example_routes_each_predictor(two_lm_example):
         # predictors, each with its own LM -- is the example's).
         program = two_lm_example.TwoLMQA()
         program.draft.set_lm(
-            _NamedDummyLM(draft_model, [{"reasoning": "r", "draft_answer": "the sky is blue"}] * 5)
+            _NamedDummyLM(
+                draft_model, [{"reasoning": "r", "draft_answer": "the sky is blue"}] * 5
+            )
         )
         program.refine.set_lm(
             _NamedDummyLM(refine_model, [{"reasoning": "r", "answer": "blue"}] * 5)
@@ -85,10 +89,12 @@ async def test_two_lm_example_routes_each_predictor(two_lm_example):
     ) as env:
         worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
         async with worker:
-            pred = await handle.execute(env.client, {"question": "Why is the sky blue?"})
+            pred = await handle.execute(
+                env.client, {"question": "Why is the sky blue?"}
+            )
 
     assert pred.answer == "blue"
     usage = pred.get_lm_usage()
     # Each predictor was attributed to its own model -> two distinct keys.
-    assert draft_model in usage   # draft predictor -> DRAFT_MODEL
+    assert draft_model in usage  # draft predictor -> DRAFT_MODEL
     assert refine_model in usage  # refine predictor -> REFINE_MODEL

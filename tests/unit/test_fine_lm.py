@@ -67,7 +67,9 @@ def test_spec_drives_model_and_capability_flags():
 @pytest.mark.asyncio
 async def test_acall_returns_outputs_and_feeds_usage_tracker(fake_lm_activity):
     state = fake_lm_activity(
-        LMCallOutput(outputs=["the answer is blue"], usage={"total_tokens": 5}, model="openai/x")
+        LMCallOutput(
+            outputs=["the answer is blue"], usage={"total_tokens": 5}, model="openai/x"
+        )
     )
     lm = WorkflowLM(spec=_spec(), lm_ref="predict", program="qa")
 

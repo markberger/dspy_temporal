@@ -21,7 +21,9 @@ def _workflow_run_for_mode(mode: RunMode):
     ``DeployedProgram`` is mode-agnostic; it just branches here rather than
     moving out of the coarse package (avoids a churny re-home).
     """
-    return DSPyProgramFineWorkflow.run if mode == RunMode.FINE else DSPyProgramWorkflow.run
+    return (
+        DSPyProgramFineWorkflow.run if mode == RunMode.FINE else DSPyProgramWorkflow.run
+    )
 
 
 @dataclass

@@ -112,7 +112,9 @@ def test_json_safe_drops_non_serializable_values():
 def test_encode_lm_kwargs_passes_through_primitives_and_json_object():
     # ChatAdapter primitives and the JSONAdapter json_object fallback are already
     # JSON-native, so they cross untouched.
-    out = encode_lm_kwargs({"temperature": 0.0, "response_format": {"type": "json_object"}})
+    out = encode_lm_kwargs(
+        {"temperature": 0.0, "response_format": {"type": "json_object"}}
+    )
     json.dumps(out)
     assert out == {"temperature": 0.0, "response_format": {"type": "json_object"}}
 
@@ -142,5 +144,7 @@ def test_decode_lm_kwargs_rebuilds_litellm_json_schema():
 
 
 def test_decode_lm_kwargs_passes_through_plain_values():
-    decoded = decode_lm_kwargs({"temperature": 0.0, "response_format": {"type": "json_object"}})
+    decoded = decode_lm_kwargs(
+        {"temperature": 0.0, "response_format": {"type": "json_object"}}
+    )
     assert decoded == {"temperature": 0.0, "response_format": {"type": "json_object"}}

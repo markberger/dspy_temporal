@@ -22,7 +22,9 @@ def test_configure_lm_reads_model_from_env(monkeypatch):
 
 
 def test_configure_lm_forwards_kwargs():
-    lm = cfg.configure_lm_from_env(model="openai/gpt-4o-mini", temperature=0.0, max_tokens=128)
+    lm = cfg.configure_lm_from_env(
+        model="openai/gpt-4o-mini", temperature=0.0, max_tokens=128
+    )
     assert lm.kwargs.get("temperature") == 0.0
     assert lm.kwargs.get("max_tokens") == 128
 

@@ -38,7 +38,9 @@ def fresh_registry():
 @pytest.fixture
 def dummy_lm():
     """A canned offline LM so tests need no network or API keys."""
-    return DummyLM([{"reasoning": "the sky scatters blue light", "answer": "blue"}] * 50)
+    return DummyLM(
+        [{"reasoning": "the sky scatters blue light", "answer": "blue"}] * 50
+    )
 
 
 @pytest.fixture
@@ -105,7 +107,10 @@ class ReActWorkerLM(DummyLM):
             if self._fail_extract_once and not _REACT_STATE["extract_failed"]:
                 _REACT_STATE["extract_failed"] = True
                 raise RuntimeError("transient extract-step failure")
-            fields = {"reasoning": "Based on the observation.", "answer": "It is sunny in Tokyo."}
+            fields = {
+                "reasoning": "Based on the observation.",
+                "answer": "It is sunny in Tokyo.",
+            }
 
         content = self._format_answer_fields(fields)
         message = dotdict(content=content, tool_calls=None)

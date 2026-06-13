@@ -11,7 +11,11 @@ from dataclasses import dataclass, field
 
 import dspy
 
-from .options import DEFAULT_NON_RETRYABLE, CallOptions, RunMode  # noqa: F401  (re-exported)
+from .options import (  # noqa: F401  (re-exported)
+    DEFAULT_NON_RETRYABLE,
+    CallOptions,
+    RunMode,
+)
 
 
 @dataclass

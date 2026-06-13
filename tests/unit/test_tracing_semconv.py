@@ -19,7 +19,12 @@ def test_lm_span_name():
 def test_lm_request_attributes_full():
     instance = SimpleNamespace(
         model="openai/gpt-4o-mini",
-        kwargs={"temperature": 0.7, "max_tokens": 256, "top_p": 0.9, "api_key": "secret"},
+        kwargs={
+            "temperature": 0.7,
+            "max_tokens": 256,
+            "top_p": 0.9,
+            "api_key": "secret",
+        },
     )
     a = semconv.lm_request_attributes(instance)
     assert a["gen_ai.request.model"] == "openai/gpt-4o-mini"

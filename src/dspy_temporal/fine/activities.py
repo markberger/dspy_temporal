@@ -82,7 +82,11 @@ def _with_tracing_callback(ctx_kwargs: dict) -> dict:
 
 def _spec_for(lm: dspy.BaseLM) -> LMSpec:
     """Describe an LM as a JSON-native LMSpec (no credentials)."""
-    kwargs = {k: v for k, v in dict(getattr(lm, "kwargs", {})).items() if k not in _SECRET_KWARGS}
+    kwargs = {
+        k: v
+        for k, v in dict(getattr(lm, "kwargs", {})).items()
+        if k not in _SECRET_KWARGS
+    }
     return LMSpec(
         model=lm.model,
         model_type=getattr(lm, "model_type", "chat"),
@@ -139,7 +143,11 @@ def lm_call_activity(call: LMCallInput) -> LMCallOutput:
     lm = base.copy()
 
     with dspy.context(**_with_tracing_callback({})):
-        outputs = lm(prompt=call.prompt, messages=call.messages, **decode_lm_kwargs(call.lm_kwargs))
+        outputs = lm(
+            prompt=call.prompt,
+            messages=call.messages,
+            **decode_lm_kwargs(call.lm_kwargs),
+        )
 
     entry = lm.history[-1] if lm.history else {}
     return LMCallOutput(

@@ -76,7 +76,11 @@ async def test_fine_lm_span_parents_to_its_activity_with_usage(tracing, dummy_lm
         worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
         async with worker:
             pred = await dt.run_program(
-                env.client, "qa", {"question": "sky?"}, task_queue=task_queue, mode=dt.RunMode.FINE
+                env.client,
+                "qa",
+                {"question": "sky?"},
+                task_queue=task_queue,
+                mode=dt.RunMode.FINE,
             )
 
     assert pred.answer == "blue"

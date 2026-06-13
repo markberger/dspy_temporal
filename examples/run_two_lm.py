@@ -19,9 +19,9 @@ import json
 import os
 import sys
 
-import dspy_temporal as dt
-
 from two_lm_program import TASK_QUEUE  # noqa: E402
+
+import dspy_temporal as dt
 
 
 async def main() -> None:

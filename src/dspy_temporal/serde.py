@@ -39,7 +39,11 @@ def _jsonify(value: Any) -> Any:
 
 def prediction_to_dict(prediction: Prediction) -> dict[str, Any]:
     """Convert a ``Prediction`` into a JSON-safe dict of its output fields."""
-    store = prediction.toDict() if hasattr(prediction, "toDict") else dict(prediction._store)
+    store = (
+        prediction.toDict()
+        if hasattr(prediction, "toDict")
+        else dict(prediction._store)
+    )
     return {str(k): _jsonify(v) for k, v in store.items()}
 
 

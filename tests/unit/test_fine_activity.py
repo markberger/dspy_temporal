@@ -55,7 +55,11 @@ def test_lm_call_activity_returns_outputs_and_usage(dummy_lm):
     # ChatAdapter-formatted completion carrying the canned answer.
     assert "blue" in output.outputs[0]
     # Usage came from the isolated history[-1] entry; model is the worker LM's.
-    assert output.usage == {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    assert output.usage == {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
     assert output.model == "dummy"
     assert output.response_model == "dummy"
 
@@ -64,21 +68,29 @@ def test_lm_call_activity_without_worker_lm_raises():
     dt.clear_worker_lm()
     env = ActivityEnvironment()
     with pytest.raises(RuntimeError, match="requires a worker LM"):
-        env.run(lm_call_activity, LMCallInput(messages=[{"role": "user", "content": "x"}]))
+        env.run(
+            lm_call_activity, LMCallInput(messages=[{"role": "user", "content": "x"}])
+        )
 
 
 def test_lm_call_activity_routes_by_lm_ref():
     """A predictor's bound .lm is honored via lm_ref; unbound predictors and a
     missing lm_ref fall back to the worker default."""
-    dt.register_program("multi", lambda: _TwoPredictor(bound_lm=DummyLM([{"answer": "BOUND"}] * 5)))
+    dt.register_program(
+        "multi", lambda: _TwoPredictor(bound_lm=DummyLM([{"answer": "BOUND"}] * 5))
+    )
     dt.set_worker_lm(DummyLM([{"answer": "DEFAULT"}] * 5))
     env = ActivityEnvironment()
     msgs = [{"role": "user", "content": "q?"}]
 
-    bound = env.run(lm_call_activity, LMCallInput(program="multi", lm_ref="smart", messages=msgs))
+    bound = env.run(
+        lm_call_activity, LMCallInput(program="multi", lm_ref="smart", messages=msgs)
+    )
     assert "BOUND" in bound.outputs[0]
 
-    unbound = env.run(lm_call_activity, LMCallInput(program="multi", lm_ref="fast", messages=msgs))
+    unbound = env.run(
+        lm_call_activity, LMCallInput(program="multi", lm_ref="fast", messages=msgs)
+    )
     assert "DEFAULT" in unbound.outputs[0]
 
     # No lm_ref (back-compat) -> worker default, never touches the registry.
@@ -112,7 +124,9 @@ def test_lm_call_activity_decodes_response_format_marker(dummy_lm):
 def test_describe_lms_activity_describes_each_predictor(dummy_lm):
     """Each predictor's effective LM is described; a bound .lm wins over the
     worker default, and there is a __default__ entry for the worker LM."""
-    dt.register_program("multi", lambda: _TwoPredictor(bound_lm=dspy.LM("openai/gpt-4o")))
+    dt.register_program(
+        "multi", lambda: _TwoPredictor(bound_lm=dspy.LM("openai/gpt-4o"))
+    )
     dt.set_worker_lm(dummy_lm)
     env = ActivityEnvironment()
 
@@ -132,7 +146,9 @@ def test_describe_lms_activity_describes_each_predictor(dummy_lm):
 def test_describe_lms_activity_strips_credentials():
     """An api_key in the LM's kwargs never crosses into an LMSpec."""
     dt.register_program("qa", lambda: dspy.Predict("question -> answer"))
-    dt.set_worker_lm(dspy.LM("openai/gpt-4o-mini", api_key="sk-secret", temperature=0.0))
+    dt.set_worker_lm(
+        dspy.LM("openai/gpt-4o-mini", api_key="sk-secret", temperature=0.0)
+    )
     env = ActivityEnvironment()
 
     out = env.run(describe_lms_activity, LMDescribeInput(program="qa"))
@@ -169,7 +185,9 @@ def test_lm_call_activity_applies_tracing_callback_once(dummy_lm):
     env = ActivityEnvironment()
     # Simulate the same callback also registered globally -> must not double-add.
     with dspy.context(callbacks=[cb]):
-        env.run(lm_call_activity, LMCallInput(messages=[{"role": "user", "content": "x"}]))
+        env.run(
+            lm_call_activity, LMCallInput(messages=[{"role": "user", "content": "x"}])
+        )
 
     assert seen["callbacks"].count(cb) == 1
 

@@ -136,7 +136,9 @@ async def test_fine_json_adapter_structured_output():
         config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
     )
     # Worker LM claims response_format support and emits JSON-formatted answers.
-    dt.set_worker_lm(_StructuredDummyLM([{"answer": "blue"}] * 5, adapter=dspy.JSONAdapter()))
+    dt.set_worker_lm(
+        _StructuredDummyLM([{"answer": "blue"}] * 5, adapter=dspy.JSONAdapter())
+    )
 
     saved_adapter = dspy.settings.adapter
     dspy.configure(adapter=dspy.JSONAdapter())
@@ -144,9 +146,13 @@ async def test_fine_json_adapter_structured_output():
         async with await WorkflowEnvironment.start_time_skipping(
             data_converter=data_converter
         ) as env:
-            worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+            worker = dt.build_worker(
+                env.client, config=RunConfig(task_queue=task_queue)
+            )
             async with worker:
-                pred = await handle.execute(env.client, {"question": "color of the sky?"})
+                pred = await handle.execute(
+                    env.client, {"question": "color of the sky?"}
+                )
     finally:
         dspy.configure(adapter=saved_adapter)
 

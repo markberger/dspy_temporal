@@ -44,7 +44,9 @@ class TwoLMQA(dspy.Module):
     # LM call inside the workflow, which WorkflowLM guards against).
     async def aforward(self, question: str) -> dspy.Prediction:
         drafted = await self.draft.acall(question=question)
-        return await self.refine.acall(question=question, draft_answer=drafted.draft_answer)
+        return await self.refine.acall(
+            question=question, draft_answer=drafted.draft_answer
+        )
 
 
 two_lm_qa = dt.deploy_module(
