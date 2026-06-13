@@ -21,7 +21,10 @@ import os
 
 import dspy_temporal as dt
 
-# Importing this registers the "qa" program builder in the process registry.
+# Importing these registers the program builders in the process registry:
+#   - qa_program       -> "qa" (coarse mode)
+#   - react_program    -> "weather_agent" (fine mode; per-LM/per-tool activities)
+import react_program  # noqa: E402,F401  (import registers "weather_agent")
 from qa_program import TASK_QUEUE  # noqa: E402
 
 

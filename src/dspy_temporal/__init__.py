@@ -17,7 +17,16 @@ from .config import (
     set_worker_lm,
 )
 from .converter import connect, data_converter
-from .models import ProgramCallInput, ProgramCallOutput
+from .fine.activities import lm_call_activity, tool_call_activity
+from .fine.workflow import DSPyProgramFineWorkflow
+from .models import (
+    LMCallInput,
+    LMCallOutput,
+    ProgramCallInput,
+    ProgramCallOutput,
+    ToolCallInput,
+    ToolCallOutput,
+)
 from .registry import ProgramRegistry, default_registry, register_program
 from .worker import build_worker
 
@@ -41,9 +50,17 @@ __all__ = [
     "CallOptions",
     "ProgramCallInput",
     "ProgramCallOutput",
+    "LMCallInput",
+    "LMCallOutput",
+    "ToolCallInput",
+    "ToolCallOutput",
     "ProgramRegistry",
     "default_registry",
     # workflow / activity (for custom worker wiring)
     "DSPyProgramWorkflow",
     "run_program_activity",
+    # fine mode
+    "DSPyProgramFineWorkflow",
+    "lm_call_activity",
+    "tool_call_activity",
 ]
