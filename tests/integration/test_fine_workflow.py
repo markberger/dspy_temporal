@@ -6,6 +6,7 @@ observation flows back into the answer, and completed steps are not re-run when 
 later activity is retried (the core durability win over coarse mode).
 """
 
+import threading
 import uuid
 
 import dspy
@@ -16,6 +17,48 @@ from temporalio.testing import WorkflowEnvironment
 import dspy_temporal as dt
 from dspy_temporal.config import CallOptions, RunConfig
 from dspy_temporal.converter import data_converter
+
+
+# Module-global LM-call counter for the fan-out tests. The activity runs on a
+# worker_lm.copy() (deep-copied), but module globals are shared, so increments
+# from the concurrent activity threads land here. A lock keeps the count exact.
+_FANOUT = {"n": 0, "failed": False}
+_FANOUT_LOCK = threading.Lock()
+
+
+class _CountingDummyLM(DummyLM):
+    """Counts each LM call; optionally fails the very first call once (to prove a
+    retried branch doesn't re-run the already-completed concurrent branches)."""
+
+    def __init__(self, *, fail_once: bool = False):
+        super().__init__([{"answer": "ok"}] * 10)
+        self._fail_once = fail_once
+
+    def forward(self, prompt=None, messages=None, **kwargs):
+        with _FANOUT_LOCK:
+            _FANOUT["n"] += 1
+            if self._fail_once and not _FANOUT["failed"]:
+                _FANOUT["failed"] = True
+                raise RuntimeError("transient fan-out failure")
+        return super().forward(prompt=prompt, messages=messages, **kwargs)
+
+
+class _FanOut(dspy.Module):
+    """Three predictors fanned out concurrently with dspy_temporal.gather."""
+
+    def __init__(self):
+        super().__init__()
+        self.a = dspy.Predict("question -> answer")
+        self.b = dspy.Predict("question -> answer")
+        self.c = dspy.Predict("question -> answer")
+
+    async def aforward(self, question):
+        a, b, c = await dt.gather(
+            self.a.acall(question=question),
+            self.b.acall(question=question),
+            self.c.acall(question=question),
+        )
+        return dspy.Prediction(answer=",".join([a.answer, b.answer, c.answer]))
 
 
 class _NamedDummyLM(DummyLM):
@@ -156,6 +199,60 @@ async def test_fine_json_adapter_structured_output():
     rf = _RF_SEEN.get("response_format")
     assert rf is not None and rf["type"] == "json_schema"
     assert "answer" in rf["json_schema"]["schema"]["properties"]
+
+
+@pytest.mark.asyncio
+async def test_fine_async_fan_out_runs_concurrent_activities():
+    """A module that fans out with dspy_temporal.gather: each branch's LM call is
+    its own concurrent activity. Proves asyncio.gather works in the workflow."""
+    _FANOUT.update(n=0, failed=False)
+    task_queue = f"tq-{uuid.uuid4().hex[:8]}"
+    handle = dt.deploy_module(
+        "fanout",
+        _FanOut,
+        config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
+    )
+    dt.set_worker_lm(_CountingDummyLM())
+
+    async with await WorkflowEnvironment.start_time_skipping(
+        data_converter=data_converter
+    ) as env:
+        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        async with worker:
+            pred = await handle.execute(env.client, {"question": "color?"})
+
+    assert pred.answer == "ok,ok,ok"  # all three branches contributed
+    assert _FANOUT["n"] == 3  # three separate dspy_lm_call activities
+
+
+@pytest.mark.asyncio
+async def test_fine_fan_out_retry_does_not_reexecute_completed_branches():
+    """The durability guarantee under concurrency: when one fan-out branch's
+    activity fails and is retried, the already-completed branches are not re-run
+    -- so the LM runs exactly 4 times (3 branches + 1 retry)."""
+    _FANOUT.update(n=0, failed=False)
+    task_queue = f"tq-{uuid.uuid4().hex[:8]}"
+    handle = dt.deploy_module(
+        "fanout_flaky",
+        _FanOut,
+        config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
+    )
+    dt.set_worker_lm(_CountingDummyLM(fail_once=True))
+    options = CallOptions(maximum_attempts=5, initial_interval_seconds=0.1)
+
+    async with await WorkflowEnvironment.start_time_skipping(
+        data_converter=data_converter
+    ) as env:
+        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        async with worker:
+            pred = await handle.execute(
+                env.client, {"question": "color?"}, options=options
+            )
+
+    assert pred.answer == "ok,ok,ok"
+    # 3 branches + exactly 1 retry of the one that failed; completed branches
+    # were not re-executed (that would push the count above 4).
+    assert _FANOUT["n"] == 4
 
 
 @pytest.mark.asyncio

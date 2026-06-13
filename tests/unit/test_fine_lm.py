@@ -105,6 +105,9 @@ async def test_acall_without_tracker_or_usage_is_a_noop(fake_lm_activity):
 
 
 def test_forward_is_guarded_against_sync_use():
-    """The sync path would block the workflow thread; it must fail fast."""
+    """The sync path would block the workflow thread; it must fail fast and point
+    at the async fan-out alternative."""
     with pytest.raises(RuntimeError, match="only supports the async path"):
+        WorkflowLM(spec=_spec()).forward(prompt="x")
+    with pytest.raises(RuntimeError, match="dspy_temporal.gather"):
         WorkflowLM(spec=_spec()).forward(prompt="x")

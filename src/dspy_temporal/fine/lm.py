@@ -115,9 +115,15 @@ class WorkflowLM(dspy.BaseLM):
     # `acall` is the only entry DSPy's async path uses; the sync `__call__`
     # would run a blocking HTTP request inside the workflow, which must never
     # happen. Guard it loudly so a misconfigured (sync) program fails fast
-    # instead of stalling the workflow task.
+    # instead of stalling the workflow task. This is also what surfaces when a
+    # program fans out with the thread-based `dspy.Parallel` (its sync calls hit
+    # this), so point the user at the async alternative.
     def forward(self, *args: Any, **kwargs: Any):  # pragma: no cover - guard
         raise RuntimeError(
-            "WorkflowLM only supports the async path (use program.acall in the "
-            "fine workflow); a synchronous LM call cannot run inside a workflow."
+            "WorkflowLM only supports the async path: a synchronous LM call "
+            "cannot run inside a workflow. Fine mode runs program.acall, so this "
+            "usually means the program fanned out with dspy.Parallel or threads "
+            "(both unsupported in the workflow). Rewrite the fan-out in aforward "
+            "using dspy_temporal.gather (asyncio.gather over .acall()), or run the "
+            "program in coarse mode."
         )

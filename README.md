@@ -110,8 +110,8 @@ agent = dt.deploy_module("weather_agent", build_agent,
 The same worker serves both modes (it registers both workflows and all activities), so no
 worker change is needed. Run it the usual way — `run_program(..., mode=RunMode.FINE)` or
 `agent.execute(client, {...})`. In the Temporal UI you'll see distinct `dspy_lm_call` /
-`dspy_tool_call` activities per run. A runnable example is in `examples/`
-(`react_program.py`, `run_react.py`).
+`dspy_tool_call` activities per run. Runnable examples are in `examples/`
+(`react_program.py` + `run_react.py`; `parallel_program.py` for concurrent fan-out).
 
 **Where each piece runs:** the tool *bodies* and the LM HTTP calls run in activities (real
 I/O allowed); the builder, the ReAct loop, and adapter format/parse run in the workflow as
@@ -119,7 +119,7 @@ deterministic Python. Tool args arrive JSON-native and are coerced to the annota
 tool return values are JSON-ified, so tools should return JSON-native data or pydantic
 models (not live handles). Both sync and async tool functions work.
 
-**Multiple LMs and structured outputs (supported):**
+**Multiple LMs, structured outputs, and parallel fan-out (all supported):**
 
 - **Per-predictor LMs** — bind a predictor's own `.lm` in the builder
   (`self.summarize.lm = dspy.LM("openai/gpt-4o")`); the worker resolves each predictor's LM
@@ -129,11 +129,16 @@ models (not live handles). Both sync and async tool functions work.
 - **JSONAdapter / structured outputs** — a structured `response_format` (the pydantic class
   `JSONAdapter` builds from the signature) now crosses the boundary as its JSON schema.
   Configure the adapter on the worker once: `dspy.configure(adapter=dspy.JSONAdapter())`.
+- **Concurrent async fan-out** — fan out from `aforward` with
+  `await dspy_temporal.gather(p1.acall(...), p2.acall(...))`; each leaf call is its own
+  concurrent `dspy_lm_call` activity on Temporal's deterministic loop, and a crash resumes
+  from whichever branches already finished (see `examples/parallel_program.py`).
 
-**Limitations (use coarse mode if you need these):**
+**Remaining limitations (use coarse mode if you need these):**
 
-1. **Sequential async only** — programs that fan out internally (`dspy.Parallel`, threads,
-   `asyncio.gather`) aren't supported in the workflow.
+1. **Thread-based fan-out** — `dspy.Parallel` / threads can't run in the workflow (the sandbox
+   forbids threads, and they drive *sync* calls). Use `dspy_temporal.gather` (async) instead,
+   or run the program in coarse mode.
 2. **No ReAct context-window-truncation fallback** — a `ContextWindowExceededError` becomes
    a Temporal `ActivityError` across the boundary, so ReAct's truncate-and-retry won't trigger.
 3. **Tools resolved via `program.tools`** — covers ReAct and any module exposing a `.tools`

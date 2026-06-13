@@ -23,6 +23,7 @@ from .fine.activities import (
     lm_call_activity,
     tool_call_activity,
 )
+from .fine.parallel import aparallel, gather
 from .fine.workflow import DSPyProgramFineWorkflow
 from .models import (
     LMCallInput,
@@ -76,4 +77,6 @@ __all__ = [
     "describe_lms_activity",
     "lm_call_activity",
     "tool_call_activity",
+    "gather",
+    "aparallel",
 ]
