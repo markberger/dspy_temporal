@@ -12,7 +12,7 @@ workflows — with retries, timeouts, and observability — without writing Temp
   activity, with the program's orchestration running in the workflow. Completed LM/tool
   calls are recorded in Temporal history, so long/agentic runs resume from the last
   completed step instead of re-calling the model, and each LM call gets an isolated span
-  (no token-attribution ambiguity under concurrency). Opt in with `RunConfig(mode="fine")`.
+  (no token-attribution ambiguity under concurrency). Opt in with `RunConfig(mode=RunMode.FINE)`.
   See [Fine-grained mode](#fine-grained-mode) for usage and limits.
 
 ## How it works
@@ -88,7 +88,7 @@ its own activity. The payoff:
 - **Per-call tracing:** each LM call runs on an isolated LM copy and emits its own span
   with correct `gen_ai.usage.*` tokens (the coarse shared-history attribution caveat is gone).
 
-Opt in per program with `RunConfig(mode="fine")`. Tools are ordinary Python functions you
+Opt in per program with `RunConfig(mode=RunMode.FINE)`. Tools are ordinary Python functions you
 hand to `dspy.ReAct` in the builder — there is no fine-mode-specific tool API:
 
 ```python
@@ -104,11 +104,11 @@ def build_agent() -> dspy.Module:
     return dspy.ReAct("question -> answer", tools=[get_weather])
 
 agent = dt.deploy_module("weather_agent", build_agent,
-                         config=dt.RunConfig(task_queue="dspy-temporal", mode="fine"))
+                         config=dt.RunConfig(task_queue="dspy-temporal", mode=dt.RunMode.FINE))
 ```
 
 The same worker serves both modes (it registers both workflows and all activities), so no
-worker change is needed. Run it the usual way — `run_program(..., mode="fine")` or
+worker change is needed. Run it the usual way — `run_program(..., mode=RunMode.FINE)` or
 `agent.execute(client, {...})`. In the Temporal UI you'll see distinct `dspy_lm_call` /
 `dspy_tool_call` activities per run. A runnable example is in `examples/`
 (`react_program.py`, `run_react.py`).

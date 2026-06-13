@@ -1,6 +1,6 @@
 """A fine-mode ReAct agent: each LM call and tool call is its own activity.
 
-Deploying with ``mode="fine"`` makes the worker orchestrate the ReAct loop in
+Deploying with ``mode=RunMode.FINE`` makes the worker orchestrate the ReAct loop in
 the workflow and run every model call (and every ``get_weather`` call) as a
 separate, independently-retried Temporal activity. In the Temporal UI you'll see
 distinct ``dspy_lm_call`` / ``dspy_tool_call`` events; on a crash the run resumes
@@ -36,5 +36,5 @@ def build_weather_agent() -> dspy.Module:
 weather_agent = dt.deploy_module(
     "weather_agent",
     build_weather_agent,
-    config=dt.RunConfig(task_queue=TASK_QUEUE, mode="fine"),
+    config=dt.RunConfig(task_queue=TASK_QUEUE, mode=dt.RunMode.FINE),
 )

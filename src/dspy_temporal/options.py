@@ -7,6 +7,7 @@ inside the workflow sandbox without dragging in litellm/http machinery.
 from __future__ import annotations
 
 from datetime import timedelta
+from enum import Enum
 
 from pydantic import BaseModel, Field
 from temporalio.common import RetryPolicy
@@ -14,6 +15,22 @@ from temporalio.common import RetryPolicy
 # Errors that should never be retried: a bigger prompt won't fit on retry, and a
 # parse error is deterministic given the same model output.
 DEFAULT_NON_RETRYABLE = ["ContextWindowExceededError"]
+
+
+class RunMode(str, Enum):
+    """How a deployed program runs on Temporal.
+
+    - ``COARSE``: the whole ``dspy.Module`` runs in one activity; durability is
+      job-level (a crash re-runs the whole program).
+    - ``FINE``: each LM call and each tool call is its own activity, orchestrated
+      by the workflow, so completed steps survive a crash and are not re-run.
+
+    A ``str`` mix-in (rather than 3.11+ ``enum.StrEnum``, since we support 3.10)
+    keeps the members JSON/repr-friendly.
+    """
+
+    COARSE = "coarse"
+    FINE = "fine"
 
 
 class CallOptions(BaseModel):

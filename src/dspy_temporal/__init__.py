@@ -11,6 +11,7 @@ from .coarse.workflow import DSPyProgramWorkflow
 from .config import (
     CallOptions,
     RunConfig,
+    RunMode,
     clear_worker_lm,
     configure_lm_from_env,
     get_worker_lm,
@@ -47,6 +48,7 @@ __all__ = [
     "clear_worker_lm",
     # config / models
     "RunConfig",
+    "RunMode",
     "CallOptions",
     "ProgramCallInput",
     "ProgramCallOutput",

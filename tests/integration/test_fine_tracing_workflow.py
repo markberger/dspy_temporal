@@ -76,7 +76,7 @@ async def test_fine_lm_span_parents_to_its_activity_with_usage(tracing, dummy_lm
         worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
         async with worker:
             pred = await dt.run_program(
-                env.client, "qa", {"question": "sky?"}, task_queue=task_queue, mode="fine"
+                env.client, "qa", {"question": "sky?"}, task_queue=task_queue, mode=dt.RunMode.FINE
             )
 
     assert pred.answer == "blue"
@@ -119,7 +119,7 @@ async def test_fine_react_emits_lm_and_tool_spans_per_activity(tracing, fine_rea
                 fine_react.name,
                 {"question": "What's the weather in Tokyo?"},
                 task_queue=task_queue,
-                mode="fine",
+                mode=dt.RunMode.FINE,
             )
 
     assert "sunny" in pred.answer.lower()

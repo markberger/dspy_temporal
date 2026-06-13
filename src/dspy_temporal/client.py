@@ -7,7 +7,7 @@ import uuid
 from temporalio.client import Client
 
 from .coarse.api import _workflow_run_for_mode
-from .config import CallOptions
+from .config import CallOptions, RunMode
 from .models import ProgramCallInput
 from .serde import dict_to_prediction, normalize_inputs
 
@@ -20,12 +20,13 @@ async def run_program(
     task_queue: str = "dspy-temporal",
     workflow_id: str | None = None,
     options: CallOptions | None = None,
-    mode: str = "coarse",
+    mode: RunMode = RunMode.COARSE,
 ):
     """Start the program workflow, wait for it, and return a ``dspy.Prediction``.
 
-    ``mode`` picks the workflow: ``"coarse"`` runs the whole program in one
-    activity; ``"fine"`` orchestrates per-LM-call / per-tool-call activities.
+    ``mode`` picks the workflow: ``RunMode.COARSE`` runs the whole program in one
+    activity; ``RunMode.FINE`` orchestrates per-LM-call / per-tool-call
+    activities.
     """
     call = ProgramCallInput(
         program=name,

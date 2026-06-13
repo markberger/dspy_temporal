@@ -28,7 +28,7 @@ async def test_fine_chain_of_thought_end_to_end(dummy_lm):
     handle = dt.deploy_module(
         "qa_fine",
         lambda: dspy.ChainOfThought("question -> answer"),
-        config=RunConfig(task_queue=task_queue, mode="fine"),
+        config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
     )
     dt.set_worker_lm(dummy_lm)
 
@@ -62,7 +62,7 @@ async def test_fine_react_tool_observation_influences_answer(fine_react):
                 fine_react.name,
                 {"question": "What's the weather in Tokyo?"},
                 task_queue=task_queue,
-                mode="fine",
+                mode=dt.RunMode.FINE,
             )
 
     assert "sunny" in pred.answer.lower()
@@ -93,7 +93,7 @@ async def test_fine_completed_steps_not_reexecuted_on_retry(fine_react):
                 fine_react.name,
                 {"question": "What's the weather in Tokyo?"},
                 task_queue=task_queue,
-                mode="fine",
+                mode=dt.RunMode.FINE,
                 options=options,
             )
 

@@ -43,7 +43,7 @@ async def main() -> None:
         "weather_agent",
         {"question": question},
         task_queue=TASK_QUEUE,
-        mode="fine",
+        mode=dt.RunMode.FINE,
     )
     print("Q:", question)
     print("A:", prediction.answer)
