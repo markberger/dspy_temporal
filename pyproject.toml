@@ -39,8 +39,30 @@ line-length = 88
 quote-style = "double"
 
 [tool.ruff.lint]
-# Import sorting only (isort). No behavioral lint rules — formatting concerns only.
-select = ["I"]
+# Tier 1: import sorting + bug-catching and simplification rules. These are
+# high-signal and largely autofixable. Trailing-comma (COM812) and implicit
+# string-concat (ISC001) are intentionally NOT selected — they conflict with the
+# formatter, which already owns those concerns.
+select = [
+    "I",    # isort — import sorting
+    "F",    # Pyflakes — undefined names, unused imports/variables
+    "B",    # flake8-bugbear — likely bugs (mutable defaults, etc.)
+    "C4",   # flake8-comprehensions — clearer/faster comprehensions
+    "PIE",  # flake8-pie — misc lints (unnecessary pass, dict literals, ...)
+    "SIM",  # flake8-simplify — simplifiable conditionals/context managers
+    "RET",  # flake8-return — return-statement consistency
+    "UP",   # pyupgrade — modern syntax (target py310, from requires-python)
+    "RUF",  # Ruff-native rules (incl. RUF022 sorted __all__)
+]
+
+# Scoped relaxations for the rule groups the later tiers introduce: bandit (S)
+# in Tier 2 and annotations (ANN) in Tier 3. Listed here ahead of selection so
+# those commits stay focused on the rule additions themselves.
+[tool.ruff.lint.per-file-ignores]
+# Tests assert freely (S101) and don't need the library's annotation hygiene.
+"tests/**" = ["S101", "ANN"]
+# Examples are runnable teaching scripts: loose typing is expected.
+"examples/**" = ["ANN"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

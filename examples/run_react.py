@@ -19,7 +19,7 @@ import asyncio
 import os
 import sys
 
-from react_program import TASK_QUEUE  # noqa: E402
+from react_program import TASK_QUEUE
 
 import dspy_temporal as dt
 

@@ -27,7 +27,7 @@ def two_lm_example():
     """Import the example module (registers 'two_lm_qa') and expose its constants."""
     sys.path.insert(0, str(EXAMPLES_DIR))
     try:
-        import two_lm_program  # noqa: F401
+        import two_lm_program
     finally:
         sys.path.remove(str(EXAMPLES_DIR))
     return two_lm_program

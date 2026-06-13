@@ -19,7 +19,7 @@ import json
 import os
 import sys
 
-from two_lm_program import TASK_QUEUE  # noqa: E402
+from two_lm_program import TASK_QUEUE
 
 import dspy_temporal as dt
 

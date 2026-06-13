@@ -3,8 +3,6 @@
 import dspy
 import pytest
 
-from dspy_temporal.registry import ProgramRegistry
-
 
 def test_register_rejects_non_callable(fresh_registry):
     with pytest.raises(TypeError, match="zero-arg callable"):
@@ -19,7 +17,7 @@ def test_build_unknown_name_raises_helpful_keyerror(fresh_registry):
 
 def test_build_rejects_non_module(fresh_registry):
     fresh_registry.register("notmod", lambda: 42)
-    with pytest.raises(TypeError, match="expected a dspy.Module"):
+    with pytest.raises(TypeError, match=r"expected a dspy\.Module"):
         fresh_registry.build("notmod")
 
 

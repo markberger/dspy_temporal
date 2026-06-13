@@ -16,7 +16,7 @@ from __future__ import annotations
 from .callback import DSPyOTelCallback
 from .config import build_tracer_provider, resolve_capture_content
 
-__all__ = ["setup_tracing", "DSPyOTelCallback"]
+__all__ = ["DSPyOTelCallback", "setup_tracing"]
 
 
 def setup_tracing(

@@ -130,7 +130,7 @@ def test_encode_lm_kwargs_carries_structured_response_format():
 
 
 def test_encode_lm_kwargs_drops_other_non_json():
-    out = encode_lm_kwargs({"temperature": 0.0, "weird": lambda: 1})  # noqa: E731
+    out = encode_lm_kwargs({"temperature": 0.0, "weird": lambda: 1})
     assert out == {"temperature": 0.0}
 
 

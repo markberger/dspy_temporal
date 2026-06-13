@@ -153,9 +153,11 @@ def test_exception_records_error_status(tracer, exporter):
             raise RuntimeError("boom")
 
     cb = DSPyOTelCallback(tracer=tracer)
-    with pytest.raises(RuntimeError):
-        with dspy.context(lm=BoomLM([{"answer": "x"}]), callbacks=[cb]):
-            dspy.Predict("question -> answer")(question="?")
+    with (
+        pytest.raises(RuntimeError),
+        dspy.context(lm=BoomLM([{"answer": "x"}]), callbacks=[cb]),
+    ):
+        dspy.Predict("question -> answer")(question="?")
 
     lm = next(s for s in exporter.get_finished_spans() if s.name.startswith("chat"))
     assert lm.status.status_code.name == "ERROR"

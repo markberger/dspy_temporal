@@ -17,7 +17,7 @@ import asyncio
 import os
 import sys
 
-from qa_program import TASK_QUEUE  # noqa: E402
+from qa_program import TASK_QUEUE
 
 import dspy_temporal as dt
 

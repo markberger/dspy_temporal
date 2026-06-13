@@ -14,7 +14,7 @@ EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples"
 def test_example_qa_program_registers():
     sys.path.insert(0, str(EXAMPLES_DIR))
     try:
-        import qa_program  # noqa: F401  (import registers the builder)
+        import qa_program
     finally:
         sys.path.remove(str(EXAMPLES_DIR))
 

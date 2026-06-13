@@ -233,7 +233,7 @@ def test_tool_call_activity_runs_async_tool():
 
 
 def test_tool_call_activity_unknown_tool_raises():
-    name = _register_weather_agent(lambda city: city)  # noqa: E731
+    name = _register_weather_agent(lambda city: city)
     env = ActivityEnvironment()
     call = ToolCallInput(program=name, tool_name="does_not_exist", args={})
     with pytest.raises(KeyError, match="no tool named"):
