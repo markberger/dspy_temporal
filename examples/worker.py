@@ -24,7 +24,9 @@ import dspy_temporal as dt
 # Importing these registers the program builders in the process registry:
 #   - qa_program       -> "qa" (coarse mode)
 #   - react_program    -> "weather_agent" (fine mode; per-LM/per-tool activities)
+#   - two_lm_program   -> "two_lm_qa" (fine mode; per-predictor multi-LM)
 import react_program  # noqa: E402,F401  (import registers "weather_agent")
+import two_lm_program  # noqa: E402,F401  (import registers "two_lm_qa")
 from qa_program import TASK_QUEUE  # noqa: E402
 
 
