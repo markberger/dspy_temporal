@@ -33,12 +33,15 @@ with workflow.unsafe.imports_passed_through():
     from .lm import WorkflowLM
     from .tools import WorkflowTool
 
-from ..models import ProgramCallInput, ProgramCallOutput
+from ..models import LMDescribeInput, LMSpecsOutput, ProgramCallInput, ProgramCallOutput
 from ..options import CallOptions
 
 # ReAct's internal "finish" marker is a no-op (lambda: "Completed."); keep it
 # local to the workflow instead of paying an activity round-trip for it.
 _LOCAL_TOOLS = frozenset({"finish"})
+
+DESCRIBE_ACTIVITY_NAME = "dspy_describe_lms"
+DEFAULT_LM_REF = "__default__"
 
 
 @workflow.defn(name="DSPyProgramFine")
@@ -46,6 +49,19 @@ class DSPyProgramFineWorkflow:
     @workflow.run
     async def run(self, call: ProgramCallInput) -> ProgramCallOutput:
         options = call.options or CallOptions()
+
+        # Describe each predictor's effective LM up front (one recorded activity
+        # -> deterministic on replay). JSONAdapter / Predict read the LM's model,
+        # capability flags, and kwargs *in the workflow* before the first call, so
+        # WorkflowLM must carry them. Credentials stay on the worker.
+        specs = await workflow.execute_activity(
+            DESCRIBE_ACTIVITY_NAME,
+            LMDescribeInput(program=call.program),
+            result_type=LMSpecsOutput,
+            start_to_close_timeout=options.start_to_close_timeout(),
+            retry_policy=options.retry_policy(),
+        )
+
         program = default_registry().build(call.program)
 
         # Wrap each tool (ReAct and any module exposing a `.tools` dict) so its
@@ -58,11 +74,28 @@ class DSPyProgramFineWorkflow:
                     continue
                 tools[name] = WorkflowTool(tool, program=call.program, options=options)
 
-        lm = WorkflowLM(options=options)
+        # Bind a per-predictor WorkflowLM so each predictor routes to *its own*
+        # LM (honoring a bound `.lm`); the activity resolves lm_ref -> real LM.
+        default_spec = specs.specs[DEFAULT_LM_REF]
+        for name, predictor in program.named_predictors():
+            predictor.lm = WorkflowLM(
+                spec=specs.specs.get(name) or default_spec,
+                lm_ref=name,
+                program=call.program,
+                options=options,
+            )
+        # Context fallback for any predictor created dynamically at call time
+        # (not in the startup walk) -> routes to the worker default LM.
+        default_lm = WorkflowLM(
+            spec=default_spec,
+            lm_ref=DEFAULT_LM_REF,
+            program=call.program,
+            options=options,
+        )
         # track_usage=True so Module.acall accumulates per-call usage (fed by
         # WorkflowLM) and stamps it on the prediction. callbacks=[] so no spans
         # are emitted in workflow code -- the activities own span emission.
-        with dspy.context(lm=lm, track_usage=True, callbacks=[]):
+        with dspy.context(lm=default_lm, track_usage=True, callbacks=[]):
             prediction = await program.acall(**call.inputs)
 
         return ProgramCallOutput(

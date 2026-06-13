@@ -12,6 +12,14 @@ the adapter's ``_call_postprocess`` parses them with no further work. We then
 replicate the one side effect ``acall`` normally has that callers depend on:
 feeding the usage tracker, so ``prediction.get_lm_usage()`` keeps working.
 
+Each ``WorkflowLM`` carries an :class:`LMSpec` describing its predictor's
+*effective* LM (model id, capability flags, sampling kwargs). DSPy decides
+whether to attach a structured ``response_format`` (``JSONAdapter``) and what
+temperature to use *in the workflow, before the call* -- reading exactly these
+attributes -- so the spec makes those decisions match the real worker LM. The
+spec is resolved up front by the ``dspy_describe_lms`` activity (the model itself
+never crosses the boundary; only its description does).
+
 This module is loaded into the workflow via ``imports_passed_through`` (host
 code), but it is defined-by-us, so it must stay replay-safe: no wall-clock, no
 randomness -- only ``workflow.execute_activity`` and pure data shaping.
@@ -24,23 +32,53 @@ from typing import Any
 import dspy
 from temporalio import workflow
 
-from ..models import LMCallInput, LMCallOutput
+from ..models import LMCallInput, LMCallOutput, LMSpec
 from ..options import CallOptions
-from ..serde import json_safe
+from ..serde import encode_lm_kwargs
 
 LM_ACTIVITY_NAME = "dspy_lm_call"
 
-# Placeholder model id. The *real* model lives in the worker process (applied in
-# the activity); the workflow never sees it and must not serialize it.
-_WORKER_MODEL_PLACEHOLDER = "dspy-temporal/worker"
-
 
 class WorkflowLM(dspy.BaseLM):
-    """A ``dspy.BaseLM`` whose every call is a ``dspy_lm_call`` activity."""
+    """A ``dspy.BaseLM`` whose every call is a ``dspy_lm_call`` activity.
 
-    def __init__(self, *, options: CallOptions | None = None):
-        super().__init__(model=_WORKER_MODEL_PLACEHOLDER)
+    Carries an :class:`LMSpec` so it stands in faithfully for the worker LM the
+    activity will actually run: same model id, same capability flags (so
+    ``JSONAdapter`` branches correctly workflow-side), same sampling ``kwargs``
+    (so ``Predict``'s n>1 temperature handling matches coarse mode).
+    """
+
+    def __init__(
+        self,
+        *,
+        spec: LMSpec,
+        lm_ref: str | None = None,
+        program: str | None = None,
+        options: CallOptions | None = None,
+    ):
+        super().__init__(model=spec.model, model_type=spec.model_type)
+        # Mirror the real LM's sampling kwargs so workflow-side config derivation
+        # (predict.py reads lm.kwargs for temperature / n) matches the activity.
+        self.kwargs = dict(spec.kwargs)
+        self._spec = spec
+        self._lm_ref = lm_ref
+        self._program = program
         self._options = options or CallOptions()
+
+    # Capability flags are setterless @property on BaseLM, so we override them as
+    # properties (not instance attributes) reading from the spec. JSONAdapter
+    # reads these in the workflow to decide whether to attach a response_format.
+    @property
+    def supported_params(self) -> set[str]:
+        return set(self._spec.supported_params)
+
+    @property
+    def supports_response_schema(self) -> bool:
+        return self._spec.supports_response_schema
+
+    @property
+    def supports_function_calling(self) -> bool:
+        return self._spec.supports_function_calling
 
     async def acall(
         self,
@@ -50,7 +88,13 @@ class WorkflowLM(dspy.BaseLM):
     ) -> list[Any]:
         out = await workflow.execute_activity(
             LM_ACTIVITY_NAME,
-            LMCallInput(prompt=prompt, messages=messages, lm_kwargs=json_safe(kwargs)),
+            LMCallInput(
+                prompt=prompt,
+                messages=messages,
+                lm_kwargs=encode_lm_kwargs(kwargs),
+                lm_ref=self._lm_ref,
+                program=self._program,
+            ),
             result_type=LMCallOutput,
             start_to_close_timeout=self._options.start_to_close_timeout(),
             retry_policy=self._options.retry_policy(),
