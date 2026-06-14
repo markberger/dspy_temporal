@@ -36,5 +36,6 @@ def build_weather_agent() -> dspy.Module:
 weather_agent = dt.deploy(
     build_weather_agent,
     name="weather_agent",
-    config=dt.RunConfig(task_queue=TASK_QUEUE, mode=dt.RunMode.FINE),
+    task_queue=TASK_QUEUE,
+    mode=dt.RunMode.FINE,
 )

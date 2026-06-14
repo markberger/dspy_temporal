@@ -15,7 +15,6 @@ import pytest
 from temporalio.testing import WorkflowEnvironment
 
 import dspy_temporal as dt
-from dspy_temporal.config import RunConfig
 from dspy_temporal.converter import data_converter
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples"
@@ -43,7 +42,7 @@ async def test_compose_agent_run_inside_user_workflow(compose_example, dummy_lm)
     ) as env:
         worker = dt.build_worker(
             env.client,
-            config=RunConfig(task_queue=task_queue),
+            task_queue=task_queue,
             extra_workflows=[compose_example.ResearchWorkflow],
         )
         async with worker:

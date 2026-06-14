@@ -12,7 +12,6 @@ import dspy
 import pytest
 from temporalio import workflow as tworkflow
 
-import dspy_temporal as dt
 from dspy_temporal.execute import (
     ACTIVITY_NAME,
     DEFAULT_LM_REF,
@@ -29,6 +28,7 @@ from dspy_temporal.models import (
     ProgramCallOutput,
 )
 from dspy_temporal.options import CallOptions
+from dspy_temporal.registry import register_program
 
 
 @pytest.fixture
@@ -96,7 +96,7 @@ async def test_execute_fine_walks_predictors_and_returns_prediction(dispatch):
     """Drive a single-predictor program through fine orchestration with the
     describe + LM activities faked: the predictor's WorkflowLM dispatches one
     ``dspy_lm_call`` and the parsed field comes back on the prediction."""
-    dt.register_program("qa_fine_unit", lambda: dspy.Predict("question -> answer"))
+    register_program("qa_fine_unit", lambda: dspy.Predict("question -> answer"))
 
     spec = LMSpec(model="dummy")
     dispatch["responses"][DESCRIBE_ACTIVITY_NAME] = LMSpecsOutput(

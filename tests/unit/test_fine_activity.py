@@ -12,6 +12,7 @@ from temporalio.testing import ActivityEnvironment
 
 import dspy_temporal as dt
 from dspy_temporal import config as config_mod
+from dspy_temporal.config import clear_worker_lm
 from dspy_temporal.fine.activities import (
     describe_lms_activity,
     lm_call_activity,
@@ -25,6 +26,7 @@ from dspy_temporal.models import (
     ToolCallInput,
     ToolCallOutput,
 )
+from dspy_temporal.registry import register_program
 
 
 class _TwoPredictor(dspy.Module):
@@ -65,7 +67,7 @@ def test_lm_call_activity_returns_outputs_and_usage(dummy_lm):
 
 
 def test_lm_call_activity_without_worker_lm_raises():
-    dt.clear_worker_lm()
+    clear_worker_lm()
     env = ActivityEnvironment()
     with pytest.raises(RuntimeError, match="requires a worker LM"):
         env.run(
@@ -76,7 +78,7 @@ def test_lm_call_activity_without_worker_lm_raises():
 def test_lm_call_activity_routes_by_lm_ref():
     """A predictor's bound .lm is honored via lm_ref; unbound predictors and a
     missing lm_ref fall back to the worker default."""
-    dt.register_program(
+    register_program(
         "multi", lambda: _TwoPredictor(bound_lm=DummyLM([{"answer": "BOUND"}] * 5))
     )
     dt.set_worker_lm(DummyLM([{"answer": "DEFAULT"}] * 5))
@@ -124,9 +126,7 @@ def test_lm_call_activity_decodes_response_format_marker(dummy_lm):
 def test_describe_lms_activity_describes_each_predictor(dummy_lm):
     """Each predictor's effective LM is described; a bound .lm wins over the
     worker default, and there is a __default__ entry for the worker LM."""
-    dt.register_program(
-        "multi", lambda: _TwoPredictor(bound_lm=dspy.LM("openai/gpt-4o"))
-    )
+    register_program("multi", lambda: _TwoPredictor(bound_lm=dspy.LM("openai/gpt-4o")))
     dt.set_worker_lm(dummy_lm)
     env = ActivityEnvironment()
 
@@ -145,7 +145,7 @@ def test_describe_lms_activity_describes_each_predictor(dummy_lm):
 
 def test_describe_lms_activity_strips_credentials():
     """An api_key in the LM's kwargs never crosses into an LMSpec."""
-    dt.register_program("qa", lambda: dspy.Predict("question -> answer"))
+    register_program("qa", lambda: dspy.Predict("question -> answer"))
     dt.set_worker_lm(
         dspy.LM("openai/gpt-4o-mini", api_key="sk-secret", temperature=0.0)
     )
@@ -159,8 +159,8 @@ def test_describe_lms_activity_strips_credentials():
 
 
 def test_describe_lms_activity_without_worker_lm_raises():
-    dt.clear_worker_lm()
-    dt.register_program("qa", lambda: dspy.Predict("question -> answer"))
+    clear_worker_lm()
+    register_program("qa", lambda: dspy.Predict("question -> answer"))
     env = ActivityEnvironment()
     with pytest.raises(RuntimeError, match="requires a worker LM"):
         env.run(describe_lms_activity, LMDescribeInput(program="qa"))
@@ -196,7 +196,7 @@ def test_lm_call_activity_applies_tracing_callback_once(dummy_lm):
 
 
 def _register_weather_agent(tool):
-    dt.register_program("agent", lambda: dspy.ReAct("question -> answer", tools=[tool]))
+    register_program("agent", lambda: dspy.ReAct("question -> answer", tools=[tool]))
     return "agent"
 
 

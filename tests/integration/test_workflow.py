@@ -8,8 +8,9 @@ import pytest
 from temporalio.testing import WorkflowEnvironment
 
 import dspy_temporal as dt
-from dspy_temporal.config import CallOptions, RunConfig
+from dspy_temporal.config import CallOptions, clear_worker_lm
 from dspy_temporal.converter import data_converter
+from dspy_temporal.registry import register_program
 
 
 @pytest.mark.asyncio
@@ -18,7 +19,7 @@ async def test_program_runs_end_to_end(qa_program):
     async with await WorkflowEnvironment.start_time_skipping(
         data_converter=data_converter
     ) as env:
-        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        worker = dt.build_worker(env.client, task_queue=task_queue)
         async with worker:
             pred = await dt.run_program(
                 env.client,
@@ -50,7 +51,7 @@ class FlakyProgram(dspy.Module):
 @pytest.mark.asyncio
 async def test_activity_is_retried(dummy_lm):
     _ATTEMPTS["n"] = 0
-    dt.register_program("flaky", FlakyProgram)
+    register_program("flaky", FlakyProgram)
     dt.set_worker_lm(dummy_lm)
 
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
@@ -58,7 +59,7 @@ async def test_activity_is_retried(dummy_lm):
     async with await WorkflowEnvironment.start_time_skipping(
         data_converter=data_converter
     ) as env:
-        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        worker = dt.build_worker(env.client, task_queue=task_queue)
         async with worker:
             pred = await dt.run_program(
                 env.client,
@@ -99,8 +100,8 @@ async def test_coarse_activity_heartbeats_past_its_timeout():
     real wall-clock; otherwise the test server could skip the timeout timer
     forward before any real beat lands.
     """
-    dt.clear_worker_lm()  # SlowProgram makes no LM call
-    dt.register_program("slow", SlowProgram)
+    clear_worker_lm()  # SlowProgram makes no LM call
+    register_program("slow", SlowProgram)
 
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
     options = CallOptions(
@@ -111,7 +112,7 @@ async def test_coarse_activity_heartbeats_past_its_timeout():
     async with await WorkflowEnvironment.start_time_skipping(
         data_converter=data_converter
     ) as env:
-        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        worker = dt.build_worker(env.client, task_queue=task_queue)
         async with worker:
             # auto_time_skipping_disabled is a sync CM; wrap the awaited run so the
             # heartbeat_timeout is enforced in real wall-clock.

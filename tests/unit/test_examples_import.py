@@ -6,7 +6,7 @@ This guards the onboarding path shown in the README without needing a server.
 import sys
 from pathlib import Path
 
-import dspy_temporal as dt
+from dspy_temporal.registry import default_registry
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples"
 
@@ -18,9 +18,9 @@ def test_example_qa_program_registers():
     finally:
         sys.path.remove(str(EXAMPLES_DIR))
 
-    assert "qa" in dt.default_registry()
+    assert "qa" in default_registry()
     assert qa_program.qa.name == "qa"
-    assert qa_program.qa.config.task_queue == qa_program.TASK_QUEUE
+    assert qa_program.qa.task_queue == qa_program.TASK_QUEUE
 
 
 def test_example_deploy_instance_registers():
@@ -31,10 +31,10 @@ def test_example_deploy_instance_registers():
     finally:
         sys.path.remove(str(EXAMPLES_DIR))
 
-    assert "qa_instance" in dt.default_registry()
+    assert "qa_instance" in default_registry()
     assert deploy_instance.qa_instance.name == "qa_instance"
     # The registered prototype builds an LM-stripped copy.
-    built = dt.default_registry().build("qa_instance")
+    built = default_registry().build("qa_instance")
     assert all(p.lm is None for _n, p in built.named_predictors())
 
 
@@ -46,7 +46,7 @@ def test_example_compose_program_registers():
     finally:
         sys.path.remove(str(EXAMPLES_DIR))
 
-    assert "compose_qa" in dt.default_registry()
+    assert "compose_qa" in default_registry()
     assert compose_program.triage_agent.name == "compose_qa"
     # The composed workflow is a real @workflow.defn (has a run method).
     assert hasattr(compose_program.ResearchWorkflow, "run")

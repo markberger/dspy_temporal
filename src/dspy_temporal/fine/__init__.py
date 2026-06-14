@@ -3,7 +3,7 @@
 The workflow (:class:`DSPyProgramFineWorkflow`) runs the program's orchestration
 and delegates each LM call to :func:`lm_call_activity` (via :class:`WorkflowLM`)
 and each tool call to :func:`tool_call_activity` (via :class:`WorkflowTool`).
-Opt in per program with ``RunConfig(mode=RunMode.FINE)``.
+Opt in per program with ``deploy(..., mode=RunMode.FINE)``.
 """
 
 from __future__ import annotations

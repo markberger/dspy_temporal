@@ -16,7 +16,6 @@ from dspy.utils.dummies import DummyLM
 from temporalio.testing import WorkflowEnvironment
 
 import dspy_temporal as dt
-from dspy_temporal.config import RunConfig
 from dspy_temporal.converter import data_converter
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples"
@@ -78,7 +77,8 @@ async def test_two_lm_example_routes_each_predictor(two_lm_example):
     dt.deploy(
         build_offline_two_lm,
         name="two_lm_qa_offline",
-        config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
+        task_queue=task_queue,
+        mode=dt.RunMode.FINE,
     )
     # The worker default backs the __default__ spec/fallback; named so it can't be
     # confused with the two per-predictor models.
@@ -87,7 +87,7 @@ async def test_two_lm_example_routes_each_predictor(two_lm_example):
     async with await WorkflowEnvironment.start_time_skipping(
         data_converter=data_converter
     ) as env:
-        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        worker = dt.build_worker(env.client, task_queue=task_queue)
         async with worker:
             pred = await dt.run_program(
                 env.client,

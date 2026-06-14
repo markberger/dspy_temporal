@@ -14,7 +14,7 @@ from dspy.utils.dummies import DummyLM
 from temporalio.testing import WorkflowEnvironment
 
 import dspy_temporal as dt
-from dspy_temporal.config import CallOptions, RunConfig
+from dspy_temporal.config import CallOptions
 from dspy_temporal.converter import data_converter
 
 
@@ -106,14 +106,15 @@ async def test_fine_chain_of_thought_end_to_end(dummy_lm):
     dt.deploy(
         lambda: dspy.ChainOfThought("question -> answer"),
         name="qa_fine",
-        config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
+        task_queue=task_queue,
+        mode=dt.RunMode.FINE,
     )
     dt.set_worker_lm(dummy_lm)
 
     async with await WorkflowEnvironment.start_time_skipping(
         data_converter=data_converter
     ) as env:
-        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        worker = dt.build_worker(env.client, task_queue=task_queue)
         async with worker:
             pred = await dt.run_program(
                 env.client,
@@ -139,14 +140,15 @@ async def test_fine_per_predictor_multi_lm(dummy_lm):
     dt.deploy(
         _TwoStage,
         name="two_stage",
-        config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
+        task_queue=task_queue,
+        mode=dt.RunMode.FINE,
     )
     dt.set_worker_lm(_NamedDummyLM("model-fast", [{"topic": "weather"}] * 5))
 
     async with await WorkflowEnvironment.start_time_skipping(
         data_converter=data_converter
     ) as env:
-        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        worker = dt.build_worker(env.client, task_queue=task_queue)
         async with worker:
             pred = await dt.run_program(
                 env.client,
@@ -174,7 +176,8 @@ async def test_fine_compiled_submodule_predictor_routes_through_activity():
     dt.deploy(
         _OuterWithCompiled,
         name="compiled_inner",
-        config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
+        task_queue=task_queue,
+        mode=dt.RunMode.FINE,
     )
     # A distinct worker default so we can prove the *bound* (compiled) LM ran,
     # not the fallback.
@@ -183,7 +186,7 @@ async def test_fine_compiled_submodule_predictor_routes_through_activity():
     async with await WorkflowEnvironment.start_time_skipping(
         data_converter=data_converter
     ) as env:
-        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        worker = dt.build_worker(env.client, task_queue=task_queue)
         async with worker:
             pred = await dt.run_program(
                 env.client,
@@ -211,7 +214,8 @@ async def test_fine_json_adapter_structured_output():
     dt.deploy(
         lambda: dspy.Predict("question -> answer"),
         name="qa_json",
-        config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
+        task_queue=task_queue,
+        mode=dt.RunMode.FINE,
     )
     # Worker LM claims response_format support and emits JSON-formatted answers.
     dt.set_worker_lm(
@@ -224,9 +228,7 @@ async def test_fine_json_adapter_structured_output():
         async with await WorkflowEnvironment.start_time_skipping(
             data_converter=data_converter
         ) as env:
-            worker = dt.build_worker(
-                env.client, config=RunConfig(task_queue=task_queue)
-            )
+            worker = dt.build_worker(env.client, task_queue=task_queue)
             async with worker:
                 pred = await dt.run_program(
                     env.client,
@@ -256,7 +258,7 @@ async def test_fine_react_tool_observation_influences_answer(fine_react):
     async with await WorkflowEnvironment.start_time_skipping(
         data_converter=data_converter
     ) as env:
-        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        worker = dt.build_worker(env.client, task_queue=task_queue)
         async with worker:
             pred = await dt.run_program(
                 env.client,
@@ -287,7 +289,7 @@ async def test_fine_completed_steps_not_reexecuted_on_retry(fine_react):
     async with await WorkflowEnvironment.start_time_skipping(
         data_converter=data_converter
     ) as env:
-        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        worker = dt.build_worker(env.client, task_queue=task_queue)
         async with worker:
             pred = await dt.run_program(
                 env.client,

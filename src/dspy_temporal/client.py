@@ -17,16 +17,17 @@ async def run_program(
     name: str,
     inputs: dict,
     *,
-    task_queue: str = "dspy-temporal",
+    task_queue: str,
     workflow_id: str | None = None,
     options: CallOptions | None = None,
     mode: RunMode = RunMode.COARSE,
 ):
     """Start the program workflow, wait for it, and return a ``dspy.Prediction``.
 
-    ``mode`` picks the workflow: ``RunMode.COARSE`` runs the whole program in one
-    activity; ``RunMode.FINE`` orchestrates per-LM-call / per-tool-call
-    activities.
+    The low-level by-name escape hatch (``TemporalProgram.start`` delegates here).
+    ``task_queue`` is required (no default). ``mode`` picks the workflow:
+    ``RunMode.COARSE`` runs the whole program in one activity; ``RunMode.FINE``
+    orchestrates per-LM-call / per-tool-call activities.
     """
     call = ProgramCallInput(
         program=name,

@@ -14,8 +14,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from temporalio.testing import WorkflowEnvironment
 
 import dspy_temporal as dt
-from dspy_temporal.config import RunConfig
 from dspy_temporal.converter import data_converter
+from dspy_temporal.registry import register_program
 from dspy_temporal.tracing import setup_tracing
 
 
@@ -37,7 +37,7 @@ async def test_activity_span_parents_dspy_spans(otel, dummy_lm):
     exporter.clear()
 
     interceptor = setup_tracing(tracer_provider=provider, set_global=False)
-    dt.register_program("qa", lambda: dspy.ChainOfThought("question -> answer"))
+    register_program("qa", lambda: dspy.ChainOfThought("question -> answer"))
     dt.set_worker_lm(dummy_lm)
 
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
@@ -45,7 +45,7 @@ async def test_activity_span_parents_dspy_spans(otel, dummy_lm):
         data_converter=data_converter,
         interceptors=[interceptor],  # client only; worker inherits it
     ) as env:
-        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        worker = dt.build_worker(env.client, task_queue=task_queue)
         async with worker:
             pred = await dt.run_program(
                 env.client, "qa", {"question": "sky?"}, task_queue=task_queue

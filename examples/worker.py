@@ -73,7 +73,7 @@ async def main() -> None:
     # two generic DSPy workflows.
     worker = dt.build_worker(
         client,
-        config=dt.RunConfig(task_queue=TASK_QUEUE),
+        task_queue=TASK_QUEUE,
         extra_workflows=[ResearchWorkflow],
     )
     print(

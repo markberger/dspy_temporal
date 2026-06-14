@@ -1,13 +1,13 @@
-"""Configuration: run config and worker-side LM setup.
+"""Configuration: worker-side LM setup and program-execution helpers.
 
-The serializable, dspy-free ``CallOptions`` lives in ``options.py`` (re-exported
-here) so the workflow can import it without dragging in dspy.
+The serializable, dspy-free ``CallOptions`` (and ``RunMode``) live in
+``options.py`` (re-exported here) so the workflow can import them without
+dragging in dspy.
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 
 import dspy
 
@@ -16,27 +16,6 @@ from .options import (  # noqa: F401  (re-exported)
     CallOptions,
     RunMode,
 )
-
-
-@dataclass
-class RunConfig:
-    """Client/worker-side defaults for deploying and running programs.
-
-    ``mode`` selects how a deployed program runs:
-
-    - ``RunMode.COARSE`` (default): the whole ``dspy.Module`` runs in one
-      activity; durability is job-level (a crash re-runs the whole program).
-    - ``RunMode.FINE``: each LM call and each tool call is its own activity,
-      orchestrated by the workflow, so completed steps survive a crash and are
-      not re-run. See :mod:`dspy_temporal.fine`.
-
-    The mode is consumed when starting a run (it picks the workflow); the worker
-    serves both modes, so a worker's ``RunConfig.mode`` does not constrain it.
-    """
-
-    task_queue: str = "dspy-temporal"
-    mode: RunMode = RunMode.COARSE
-
 
 # --- Worker-side LM configuration -------------------------------------------
 # The LM (and its API keys) lives only in the worker process, configured from
