@@ -362,6 +362,11 @@ You get one trace per run. In **coarse** mode: `Workflow → Activity → dspy.m
 completion **content is off by default**; enable it with `setup_tracing(capture_content=True)`
 or `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`.
 
+Buffered spans are force-flushed when the worker stops gracefully, so the last activities'
+spans aren't lost (a `BatchSpanProcessor` otherwise only flushes on its timer / `atexit`).
+Pass `setup_tracing(flush_on_worker_stop=False)` if you manage flushing for a provider you
+reuse elsewhere.
+
 > **Register the interceptor on the client only** — adding it to the worker too double-emits
 > spans.
 
@@ -441,8 +446,9 @@ uv run pre-commit install                                                  # ena
 ```
 
 Tests use DSPy's `DummyLM` and a time-skipping `WorkflowEnvironment` (an ephemeral in-process
-Temporal server), so they need no network or API keys. Coverage is 100% line+branch with a 90%
-floor (`fail_under`).
+Temporal server), so they need no network or API keys. Coverage is 100% line and ~99.8% branch
+— the only gap is two partial branches in `tracing/callback.py` — enforced by a 90% floor
+(`fail_under`).
 
 ### Parallel work (git worktrees)
 

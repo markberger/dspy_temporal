@@ -74,5 +74,7 @@ uv run ruff check --select I --fix .                  # sort imports
 uv run pre-commit run --all-files                     # both hooks over the repo
 ```
 
-Coverage floor is 90% (`fail_under`); the suite currently sits at 100%
-line+branch. See `README.md` for project usage and the Docker/tracing stack.
+Coverage floor is 90% (`fail_under`); the suite currently sits at 100% line and
+~99.8% branch — the only uncovered spots are two partial branches in
+`tracing/callback.py`. See `README.md` for project usage and the Docker/tracing
+stack.
