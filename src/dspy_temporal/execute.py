@@ -2,7 +2,7 @@
 
 These are the *bodies* of the two generic DSPy workflows, extracted so they can
 be awaited from BOTH our generic ``@workflow.defn`` classes AND a user-authored
-``@workflow.defn`` (Win B: compose a deployed program into your own workflow via
+``@workflow.defn`` (composing a deployed program into your own workflow via
 ``await agent.run(**inputs)``).
 
 Because they run as workflow code, heavy/host imports follow the same

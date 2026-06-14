@@ -1,4 +1,4 @@
-"""Win B: compose a deployed DSPy program inside your OWN Temporal workflow.
+"""Compose a deployed DSPy program inside your OWN Temporal workflow.
 
 ``agent.run(**inputs)`` works *inside* a user-authored ``@workflow.defn``: it
 dispatches our activities inline, so you can interleave DSPy calls with your own

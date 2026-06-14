@@ -24,7 +24,7 @@ def test_example_qa_program_registers():
 
 
 def test_example_deploy_instance_registers():
-    """Win A example: deploy() wraps a live dspy.Module instance."""
+    """deploy() wraps a live dspy.Module instance."""
     sys.path.insert(0, str(EXAMPLES_DIR))
     try:
         import deploy_instance
@@ -39,7 +39,7 @@ def test_example_deploy_instance_registers():
 
 
 def test_example_compose_program_registers():
-    """Win B example: a user @workflow.defn composing agent.run()."""
+    """A user @workflow.defn composing agent.run()."""
     sys.path.insert(0, str(EXAMPLES_DIR))
     try:
         import compose_program

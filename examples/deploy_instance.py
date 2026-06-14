@@ -1,4 +1,4 @@
-"""Win A: deploy a live (possibly compiled) ``dspy.Module`` instance.
+"""Deploy a live (possibly compiled) ``dspy.Module`` instance.
 
 ``dt.deploy`` accepts a ``dspy.Module`` *instance* -- e.g. a program you optimized
 with a DSPy teleprompter, whose predictors carry few-shot demos -- as well as the

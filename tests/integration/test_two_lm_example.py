@@ -89,9 +89,7 @@ async def test_two_lm_example_routes_each_predictor(two_lm_example):
     ) as env:
         worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
         async with worker:
-            pred = await handle.execute(
-                env.client, {"question": "Why is the sky blue?"}
-            )
+            pred = await handle.start(env.client, {"question": "Why is the sky blue?"})
 
     assert pred.answer == "blue"
     usage = pred.get_lm_usage()

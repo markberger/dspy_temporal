@@ -7,15 +7,14 @@ Three ways to get a runnable handle:
   ``dspy.Module`` instance *or* a zero-arg builder, with run config assembled from
   keywords.
 
-Both return a :class:`TemporalProgram` handle (aliased ``DeployedProgram`` for
-back-compat). The handle runs the program three ways:
+Both return a :class:`TemporalProgram` handle, which runs the program three ways:
 
 - ``await handle.run(**inputs)`` -- context-aware: inside a user-authored
   ``@workflow.defn`` it dispatches our activities inline (compose a deployed
   program into your own workflow); outside any workflow it degrades to a plain
   local DSPy call.
-- ``await handle.start(client, inputs, ...)`` (alias ``handle.execute``) -- the
-  standalone path: start the generic program workflow on a client and await it.
+- ``await handle.start(client, inputs, ...)`` -- the standalone path: start the
+  generic program workflow on a client and await it.
 """
 
 from __future__ import annotations
@@ -104,15 +103,6 @@ class TemporalProgram:
             task_queue=task_queue or self.config.task_queue,
         )
         return dict_to_prediction(output.prediction, output.lm_usage)
-
-    # Back-compat alias: DeployedProgram.execute was the original method name.
-    execute = start
-
-
-# Back-compat alias: the handle was renamed TemporalProgram in the additive
-# redesign. Existing `from dspy_temporal.coarse.api import DeployedProgram` and
-# isinstance(...) checks keep working.
-DeployedProgram = TemporalProgram
 
 
 def deploy_module(

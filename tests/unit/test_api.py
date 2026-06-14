@@ -1,6 +1,6 @@
 """Tests for the auto-wrap API: deploy / deploy_module + the TemporalProgram handle.
 
-`.start` (alias `.execute`) is covered against a fake client (records the call) so
+`.start` is covered against a fake client (records the call) so
 no Temporal server is needed; an end-to-end `.start()` lives in the integration
 suite. `.run`'s in-workflow dispatch is covered by monkeypatching the execute_*
 coroutines; its outside-a-workflow degrade runs a real local DSPy call.
@@ -13,7 +13,7 @@ import pytest
 
 import dspy_temporal as dt
 from dspy_temporal.coarse import api as api_mod
-from dspy_temporal.coarse.api import DeployedProgram, TemporalProgram
+from dspy_temporal.coarse.api import TemporalProgram
 from dspy_temporal.config import CallOptions, RunConfig, RunMode
 from dspy_temporal.models import ProgramCallInput, ProgramCallOutput
 
@@ -31,12 +31,12 @@ class FakeClient:
         return ProgramCallOutput(prediction={"answer": "blue"})
 
 
-# --- deploy_module (back-compat) --------------------------------------------
+# --- deploy_module ----------------------------------------------------------
 
 
 def test_deploy_module_registers_and_returns_handle():
     handle = dt.deploy_module("qa2", lambda: dspy.Predict("q -> a"))
-    assert isinstance(handle, DeployedProgram)
+    assert isinstance(handle, TemporalProgram)
     assert handle.name == "qa2"
     assert "qa2" in dt.default_registry()
     # Default config when none supplied.
@@ -49,11 +49,7 @@ def test_deploy_module_uses_given_config():
     assert handle.config is cfg
 
 
-# --- deploy (Win A) ----------------------------------------------------------
-
-
-def test_temporalprogram_is_deployedprogram_alias():
-    assert TemporalProgram is DeployedProgram
+# --- deploy ------------------------------------------------------------------
 
 
 def test_deploy_with_instance_registers_and_returns_handle():
@@ -94,7 +90,7 @@ def test_deploy_supplied_config_takes_precedence():
     assert handle.config is cfg
 
 
-# --- .start / .execute (standalone path) ------------------------------------
+# --- .start (standalone path) ------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -114,14 +110,12 @@ async def test_start_generates_default_workflow_id():
 
 
 @pytest.mark.asyncio
-async def test_execute_is_start_alias_and_honors_overrides():
+async def test_start_honors_overrides():
     handle = TemporalProgram(name="qa", config=RunConfig(task_queue="tq"))
     client = FakeClient()
     opts = CallOptions(maximum_attempts=9)
 
-    # `.execute` is the back-compat alias for `.start`.
-    assert TemporalProgram.execute is TemporalProgram.start
-    await handle.execute(
+    await handle.start(
         client,
         {"question": "sky?"},
         workflow_id="wf-explicit",
@@ -147,7 +141,7 @@ async def test_start_selects_fine_workflow_for_fine_mode():
     assert client.calls[0]["run"] == DSPyProgramFineWorkflow.run
 
 
-# --- .run (Win B): context-aware dispatch -----------------------------------
+# --- .run: context-aware dispatch -------------------------------------------
 
 
 @pytest.mark.asyncio

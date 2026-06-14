@@ -1,4 +1,4 @@
-"""Win C end-to-end: a Worker wired with DSPyPlugin serves DSPy programs.
+"""End-to-end: a Worker wired with DSPyPlugin serves DSPy programs.
 
 Proves the declarative path: ``Worker(client, task_queue=..., plugins=[DSPyPlugin()])``
 contributes the activities, both generic workflows, and the DSPy sandbox runner,

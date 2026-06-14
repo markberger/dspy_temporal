@@ -1,4 +1,4 @@
-"""Win B end-to-end: a user @workflow.defn composes a deployed program.
+"""End-to-end: a user @workflow.defn composes a deployed program.
 
 Proves ``await agent.run(**inputs)`` works *inside* a user-authored workflow:
 ``TemporalProgram.run`` sees it is in a workflow and dispatches ``execute_coarse``

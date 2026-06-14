@@ -6,7 +6,7 @@ __version__ = "0.1.0"
 
 from .client import run_program
 from .coarse.activities import run_program_activity
-from .coarse.api import DeployedProgram, TemporalProgram, deploy, deploy_module
+from .coarse.api import TemporalProgram, deploy, deploy_module
 from .coarse.workflow import DSPyProgramWorkflow
 from .config import (
     CallOptions,
@@ -46,10 +46,9 @@ __all__ = [  # noqa: RUF022 -- grouped by concern with section comments, not alp
     "deploy",
     "deploy_module",
     "TemporalProgram",
-    "DeployedProgram",
     "register_program",
     "run_program",
-    # compose-in-your-own-workflow (Win B)
+    # compose-in-your-own-workflow
     "execute_coarse",
     "execute_fine",
     # worker / client

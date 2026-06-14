@@ -23,9 +23,9 @@ import os
 #   - qa_program       -> "qa" (coarse mode)
 #   - react_program    -> "weather_agent" (fine mode; per-LM/per-tool activities)
 #   - two_lm_program   -> "two_lm_qa" (fine mode; per-predictor multi-LM)
-#   - deploy_instance  -> "qa_instance" (Win A: a live dspy.Module instance)
-#   - compose_program  -> "compose_qa" + ResearchWorkflow (Win B: agent.run() in
-#                         a user-authored workflow, served via extra_workflows)
+#   - deploy_instance  -> "qa_instance" (a live dspy.Module instance)
+#   - compose_program  -> "compose_qa" + ResearchWorkflow (agent.run() in a
+#                         user-authored workflow, served via extra_workflows)
 import compose_program  # noqa: F401  (registers "compose_qa" + ResearchWorkflow)
 import deploy_instance  # noqa: F401  (registers "qa_instance")
 import react_program  # noqa: F401  (import registers "weather_agent")
@@ -69,8 +69,8 @@ async def main() -> None:
 
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     client = await _connect_with_retry(address, interceptors=interceptors)
-    # extra_workflows serves the user-authored ResearchWorkflow (Win B) alongside
-    # the two generic DSPy workflows.
+    # extra_workflows serves the user-authored ResearchWorkflow alongside the
+    # two generic DSPy workflows.
     worker = dt.build_worker(
         client,
         config=dt.RunConfig(task_queue=TASK_QUEUE),

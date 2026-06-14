@@ -133,7 +133,7 @@ class ResearchWorkflow:
 
 Register the user workflow on the worker with `build_worker(..., extra_workflows=[ResearchWorkflow])`
 (or the plugin below). The standalone path is unchanged: `await agent.start(client, {...})`
-(alias `agent.execute`) starts our generic program workflow on a client, exactly like
+starts our generic program workflow on a client, exactly like
 `run_program`. If you'd rather compose without a handle, `dt.execute_coarse` /
 `dt.execute_fine` are exported too. Runnable example: `examples/compose_program.py` +
 `examples/run_compose.py`.
@@ -190,7 +190,7 @@ agent = dt.deploy_module("weather_agent", build_agent,
 
 The same worker serves both modes (it registers both workflows and all activities), so no
 worker change is needed. Run it the usual way — `run_program(..., mode=RunMode.FINE)` or
-`agent.execute(client, {...})`. In the Temporal UI you'll see distinct `dspy_lm_call` /
+`agent.start(client, {...})`. In the Temporal UI you'll see distinct `dspy_lm_call` /
 `dspy_tool_call` activities per run. A runnable example is in `examples/`
 (`react_program.py`, `run_react.py`).
 
