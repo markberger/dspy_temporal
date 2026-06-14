@@ -156,13 +156,15 @@ Temporal headers.
 
 ### ThreadPoolExecutor parenting — RESOLVED by spike (not a risk)
 
-> Update: the coarse activity is now an **async** activity (it runs the program via
-> `program.acall` so in-program concurrency traces correctly — see "Concurrency &
-> nesting"). It therefore runs on Temporal's event loop, not the sync
-> `ThreadPoolExecutor`, so the root dspy span is created on the same thread/context
-> where the `RunActivity` span is current — parenting is even more direct. The spike
-> below (about the *sync*-activity threadpool case) still holds for any remaining
-> sync activities, and the integration test still guards the parenting either way.
+> Update: the coarse activity drives the program via DSPy's async path
+> (`program.acall`) so in-program concurrency traces correctly — see "Concurrency &
+> nesting". It does so with `asyncio.run(...)` on its own worker-pool thread while
+> staying a **synchronous** activity (so the heartbeat watchdog — which beats from a
+> daemon thread — keeps working, and a sync-only program can't block the worker's
+> shared event loop). The throwaway loop's contextvar context still carries
+> `ACTIVE_CALL_ID` into `asyncio.gather` children. So the spike below (the
+> sync-activity `ThreadPoolExecutor` case) applies directly, and the integration
+> test still guards the parenting.
 
 Original concern: the coarse activity runs sync in a `ThreadPoolExecutor`, and OTel
 context is a `ContextVar` that doesn't auto-propagate into executor threads — so

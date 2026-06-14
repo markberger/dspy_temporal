@@ -7,6 +7,7 @@ run; durability is at the job level (a crash re-runs the whole program).
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 
 import dspy
@@ -20,7 +21,7 @@ from ..serde import prediction_to_dict
 
 
 @activity.defn(name="dspy_run_program")
-async def run_program_activity(call: ProgramCallInput) -> ProgramCallOutput:
+def run_program_activity(call: ProgramCallInput) -> ProgramCallOutput:
     registry = default_registry()
     program = registry.build(call.program)
 
@@ -46,11 +47,21 @@ async def run_program_activity(call: ProgramCallInput) -> ProgramCallOutput:
 
     # Prefer DSPy's async path (program.acall) so in-program concurrency done with
     # asyncio.gather propagates ACTIVE_CALL_ID and tracing spans nest correctly;
-    # sync-only modules fall back to program(). A background thread heartbeats while
-    # the program runs, so a configured heartbeat_timeout keeps the activity alive
-    # instead of timing it out. No-op when no heartbeat_timeout is set.
+    # sync-only modules fall back to program(). We drive that async path with
+    # asyncio.run on this activity's own pool thread rather than declaring the
+    # activity `async def`, on purpose:
+    #   * Heartbeat: the watchdog (heartbeat.py) beats from a daemon thread.
+    #     Temporal only makes activity.heartbeat() thread-safe for SYNC activities
+    #     (it wraps it in run_coroutine_threadsafe); an async activity routes the
+    #     beat through asyncio.create_task, which raises from a non-loop thread and
+    #     silently disables the watchdog -- re-breaking the heartbeat_timeout fix.
+    #   * Isolation: the sync program() fallback then blocks this throwaway loop on
+    #     a worker-pool thread, never the worker's shared event loop.
+    # A background thread heartbeats while the program runs, so a configured
+    # heartbeat_timeout keeps the activity alive instead of timing it out. No-op
+    # when no heartbeat_timeout is set.
     with heartbeating(), dspy.context(**ctx_kwargs):
-        prediction = await run_program_async_or_sync(program, call.inputs)
+        prediction = asyncio.run(run_program_async_or_sync(program, call.inputs))
 
     lm_usage = None
     with contextlib.suppress(Exception):
