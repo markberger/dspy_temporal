@@ -1,0 +1,48 @@
+name: test
+
+# Run the advertised coverage gate on every PR and on pushes to main. The README
+# documents this exact gate ("CI-style gate"); this enforces it server-side so a
+# regression or a coverage drop below the 90% floor can't merge green. Mirrors
+# lint.yml (SHA-pinned setup-uv, uv-managed Python, --frozen from uv.lock).
+#
+# NOTE: pinned to Python 3.11 (the repo's pinned dev version, see
+# .python-version) for now to save CI cost. requires-python supports 3.10–3.14;
+# restoring the full matrix is tracked as a follow-up.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (pytest + coverage)
+    runs-on: ubuntu-latest
+    strategy:
+      # Single-version matrix for now (cost saving), pinned to the repo's
+      # .python-version. Kept as a matrix so the follow-up — restoring
+      # ["3.10".."3.14"] + `fail-fast: false` — is a one-line change.
+      matrix:
+        python-version: ["3.11"]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv (with cache)
+        # Same SHA pin as lint.yml — setup-uv has no moving major tag.
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+      - name: Run tests with coverage
+        # --all-extras = dev + tracing; the tracing tests import OpenTelemetry
+        # directly (no skip guard), so the full suite needs both. --frozen uses
+        # the locked deps. Coverage flags mirror the README's gate verbatim.
+        run: >-
+          uv run --frozen --all-extras --python ${{ matrix.python-version }}
+          pytest --cov=dspy_temporal --cov-branch
+          --cov-report=term-missing --cov-report=xml --cov-fail-under=90

@@ -1,5 +1,8 @@
 # dspy-temporal
 
+[![lint](https://github.com/markberger/dspy_temporal/actions/workflows/lint.yml/badge.svg)](https://github.com/markberger/dspy_temporal/actions/workflows/lint.yml)
+[![test](https://github.com/markberger/dspy_temporal/actions/workflows/test.yml/badge.svg)](https://github.com/markberger/dspy_temporal/actions/workflows/test.yml)
+
 Deploy [DSPy](https://dspy.ai) programs on [Temporal](https://temporal.io) as durable
 workflows — with retries, timeouts, and observability — without writing Temporal code.
 
@@ -340,7 +343,7 @@ Unit tests use `ActivityEnvironment`; integration tests use a time-skipping
 `WorkflowEnvironment`. All tests use DSPy's `DummyLM`, so they need no network or
 API keys. Coverage is 100% line+branch with a 90% floor (`fail_under`).
 
-CI-style gate:
+CI-style gate — enforced in CI on every PR (see the **test** badge above):
 
 ```bash
 uv sync --all-extras
