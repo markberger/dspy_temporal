@@ -1,5 +1,6 @@
 """Unit tests for DSPyOTelCallback (in-memory exporter, DummyLM, no network)."""
 
+import asyncio
 from types import SimpleNamespace
 
 import dspy
@@ -162,3 +163,73 @@ def test_exception_records_error_status(tracer, exporter):
     lm = next(s for s in exporter.get_finished_spans() if s.name.startswith("chat"))
     assert lm.status.status_code.name == "ERROR"
     assert any(e.name == "exception" for e in lm.events)
+
+
+# --- concurrency & nesting (issue #10) ---------------------------------------
+
+
+class _AsyncFanout(dspy.Module):
+    """Runs two child predictions concurrently via the async interface."""
+
+    def __init__(self):
+        super().__init__()
+        self.child = dspy.Predict("question -> answer")
+
+    async def aforward(self, question):
+        results = await asyncio.gather(
+            self.child.acall(question=question),
+            self.child.acall(question=question),
+        )
+        return results[0]
+
+
+class _ParallelFanout(dspy.Module):
+    """Runs a child prediction through dspy.Parallel's ThreadPoolExecutor."""
+
+    def __init__(self):
+        super().__init__()
+        self.child = dspy.Predict("question -> answer")
+
+    def forward(self, question):
+        # num_threads=2 forces the threadpool path even for a single item, so the
+        # orphaning is deterministic (no race needed).
+        results = dspy.Parallel(num_threads=2, disable_progress_bar=True)(
+            [(self.child, {"question": question})]
+        )
+        return results[0]
+
+
+async def test_async_gather_nests_spans(tracer, exporter):
+    """The fix: asyncio copies the contextvar context per Task, so ACTIVE_CALL_ID
+    propagates and concurrent children nest under their parent in one trace."""
+    cb = DSPyOTelCallback(tracer=tracer)
+    lm = DummyLM([{"answer": "blue"}] * 4)
+    with dspy.context(lm=lm, callbacks=[cb], track_usage=True):
+        await _AsyncFanout().acall(question="sky?")
+
+    spans = exporter.get_finished_spans()
+    parent = next(s for s in spans if s.name == "dspy.module _AsyncFanout")
+    children = [s for s in spans if s.name == "dspy.module Predict"]
+    assert len(children) == 2
+    for child in children:
+        assert child.parent is not None
+        assert child.parent.span_id == parent.context.span_id
+        assert child.context.trace_id == parent.context.trace_id
+
+
+def test_dspy_parallel_orphans_spans(tracer, exporter):
+    """Characterization guard: dspy.Parallel runs items on a ThreadPoolExecutor,
+    which does not copy contextvars, so ACTIVE_CALL_ID is lost and the child
+    subtree orphans into a new trace root. This is the documented limitation; if an
+    upstream dspy copy_context() fix lands, this test flips and the docs update."""
+    cb = DSPyOTelCallback(tracer=tracer)
+    lm = DummyLM([{"answer": "blue"}] * 4)
+    with dspy.context(lm=lm, callbacks=[cb], track_usage=True):
+        _ParallelFanout()(question="sky?")
+
+    spans = exporter.get_finished_spans()
+    parent = next(s for s in spans if s.name == "dspy.module _ParallelFanout")
+    child = next(s for s in spans if s.name == "dspy.module Predict")
+    # Orphaned: different trace root, no parent (not nested under _ParallelFanout).
+    assert child.parent is None
+    assert child.context.trace_id != parent.context.trace_id

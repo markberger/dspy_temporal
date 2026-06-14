@@ -41,6 +41,10 @@ class CallOptions(BaseModel):
     """
 
     start_to_close_timeout_seconds: float = 300.0
+    # Set well above your slowest single LM/tool call and above ~1s: when set, the
+    # activity self-heartbeats at ~1/3 this interval (see heartbeat.py), so a
+    # configured value keeps the activity alive instead of guaranteeing a
+    # mid-flight HEARTBEAT timeout. None (the default) disables heartbeating.
     heartbeat_timeout_seconds: float | None = None
     maximum_attempts: int = 3
     initial_interval_seconds: float = 1.0
@@ -66,3 +70,16 @@ class CallOptions(BaseModel):
             maximum_attempts=self.maximum_attempts,
             non_retryable_error_types=list(self.non_retryable_error_types),
         )
+
+    def activity_kwargs(self) -> dict:
+        """Timeouts/retry/heartbeat kwargs for ``workflow.execute_activity``.
+
+        The single source of truth shared by every activity dispatch (coarse and
+        fine) so the option set behaves identically across modes. A ``None``
+        ``heartbeat_timeout`` is equivalent to omitting it (no heartbeat timeout).
+        """
+        return {
+            "start_to_close_timeout": self.start_to_close_timeout(),
+            "heartbeat_timeout": self.heartbeat_timeout(),
+            "retry_policy": self.retry_policy(),
+        }

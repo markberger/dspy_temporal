@@ -1,5 +1,9 @@
 """Activity-level tests using Temporal's ActivityEnvironment (no server)."""
 
+import dataclasses
+import inspect
+from datetime import timedelta
+
 import dspy
 import pytest
 from dspy.utils.dummies import DummyLM
@@ -15,12 +19,32 @@ def test_run_program_activity_returns_prediction(qa_program):
     env = ActivityEnvironment()
     call = ProgramCallInput(program="qa", inputs={"question": "color of the sky?"})
 
-    # The activity is synchronous, so ActivityEnvironment.run returns directly.
+    # The activity is synchronous (it drives the program's async path via
+    # asyncio.run internally), so ActivityEnvironment.run returns directly.
     output = env.run(run_program_activity, call)
 
     assert isinstance(output, ProgramCallOutput)
     assert output.prediction["answer"] == "blue"
     assert "reasoning" in output.prediction
+
+
+def test_runs_normally_with_heartbeat_timeout_set(qa_program):
+    """The original bug: setting heartbeat_timeout made every coarse run fail.
+
+    With the watchdog wrapping the program call, a configured heartbeat_timeout no
+    longer self-destructs -- the activity heartbeats and completes normally. (A
+    DummyLM run can finish before the first beat, so the 'beats fire' assertion
+    lives in test_heartbeat.py with a controlled blocking body, and the real
+    worker heartbeat path is exercised in tests/integration/test_workflow.py.)
+    """
+    env = ActivityEnvironment()
+    env.info = dataclasses.replace(env.info, heartbeat_timeout=timedelta(seconds=2))
+    call = ProgramCallInput(program="qa", inputs={"question": "color of the sky?"})
+
+    output = env.run(run_program_activity, call)
+
+    assert isinstance(output, ProgramCallOutput)
+    assert output.prediction["answer"] == "blue"
 
 
 def test_unknown_program_raises(qa_program):
@@ -80,7 +104,11 @@ class _StaticProgram(dspy.Module):
 
 
 def test_no_worker_lm_and_no_usage():
-    """Covers the no-worker-LM branch and the lm_usage -> None path."""
+    """Covers the no-worker-LM branch and the lm_usage -> None path.
+
+    ``_StaticProgram`` implements only ``forward`` (no ``aforward``), so this also
+    exercises the synchronous fallback in ``run_program_async_or_sync``.
+    """
     dt.clear_worker_lm()
     dt.register_program("static", _StaticProgram)
 
@@ -90,3 +118,19 @@ def test_no_worker_lm_and_no_usage():
     )
     assert output.prediction["answer"] == "static"
     assert output.lm_usage is None
+
+
+def test_coarse_activity_is_sync_so_heartbeat_watchdog_works():
+    """Invariant guard: the coarse activity must stay a *sync* def.
+
+    The heartbeat watchdog (heartbeat.py) beats from a daemon thread. Temporal
+    only makes ``activity.heartbeat()`` thread-safe for synchronous activities
+    (it wraps the call in ``run_coroutine_threadsafe``); an ``async def`` activity
+    routes the beat through ``asyncio.create_task``, which raises
+    ``RuntimeError('no running event loop')`` from a non-loop thread and silently
+    disables the watchdog -- re-breaking the heartbeat_timeout fix. The activity
+    drives DSPy's async path via ``asyncio.run`` internally instead. ``ActivityEnvironment``
+    cannot catch this (it stubs heartbeat synchronously for both kinds), so this
+    invariant is pinned here and exercised end-to-end in the integration suite.
+    """
+    assert not inspect.iscoroutinefunction(run_program_activity)

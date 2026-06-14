@@ -251,6 +251,16 @@ default**; enable it with `setup_tracing(capture_content=True)` or
 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`. Register the interceptor on the
 **client only** — adding it to the worker too double-emits spans.
 
+> **`dspy.Parallel` is not traced.** Span nesting follows DSPy's `ACTIVE_CALL_ID`
+> contextvar, which propagates on the sync path and across `asyncio.gather` (asyncio
+> copies the context into each task) but **not** across `dspy.Parallel`, which runs
+> items on a `ThreadPoolExecutor` that doesn't copy contextvars — so parallel
+> sub-calls orphan into separate trace roots. For a correct trace tree under
+> concurrency, fan out with the async interface (`asyncio.gather` over `module.acall`)
+> instead of `dspy.Parallel`; the coarse activity runs programs via `acall` by default
+> so this works out of the box. (The permanent fix is an upstream DSPy
+> `copy_context()` in its parallel executor.)
+
 ## Run locally with Docker Compose (Phoenix tracing)
 
 `docker-compose.yml` brings up a [Temporal](https://temporal.io) dev server, an

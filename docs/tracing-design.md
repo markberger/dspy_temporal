@@ -66,10 +66,37 @@ on_X_end(call_id, outputs, exception):
     span.end()
 ```
 
-Why explicit over ambient: DSPy can run sub-calls in its own worker threads
-(`dspy.Parallel`); ambient OTel context does not cross those threads, but a shared
-`call_id → span` dict does (and `ACTIVE_CALL_ID` propagation is DSPy's
-contextvar). This makes nesting robust to intra-program parallelism.
+Why explicit over ambient: it keys parenting off DSPy's own `ACTIVE_CALL_ID`
+rather than OTel's ambient context, so a span parents to the DSPy call that
+spawned it even when the two contexts diverge.
+
+#### Concurrency & nesting (the `dspy.Parallel` limitation)
+
+`ACTIVE_CALL_ID` is a **ContextVar**. It propagates correctly on the synchronous
+path and across `asyncio.gather` — asyncio copies the contextvar context into each
+Task (PEP 567), so a parent module's call_id reaches its concurrent children and
+the spans nest. It does **not** propagate across `dspy.Parallel`, which runs items
+on a `ThreadPoolExecutor`: the worker re-applies only DSPy's `thread_local_overrides`
+and never `copy_context()`s (`dspy/utils/parallelizer.py`), so `ACTIVE_CALL_ID`
+reverts to its `None` default in the worker thread. The shared `call_id → span`
+dict still crosses the thread boundary fine — but its **key** is what's lost, so
+each parallel item's sub-calls orphan into **new trace roots**.
+
+Consequences and guidance:
+
+- **Use the async interface for concurrency.** Concurrency expressed as
+  `asyncio.gather` over `.acall()` nests correctly with no patching. The coarse
+  activity runs programs via `program.acall` by default (falling back to the sync
+  call for `forward`-only modules), so async-capable programs get a correct trace
+  tree automatically. This is verified by a unit test (async fan-out → one trace)
+  and the `dspy.Parallel` orphaning is locked by a characterization test.
+- **`dspy.Parallel` (sync threadpool) orphans spans** — a documented limitation,
+  not a regression. `dspy.context` carries DSPy *settings* into a `Parallel` block
+  but cannot carry `ACTIVE_CALL_ID`, so it is not a workaround.
+- **We do not monkeypatch** DSPy's parallel executor to fix this (it would patch
+  internals, be brittle across versions, and is unnecessary given the async path).
+  The permanent root-cause fix belongs upstream in DSPy: propagate the context into
+  `ParallelExecutor` workers (`copy_context()` / re-set `ACTIVE_CALL_ID`).
 
 ## Attribute mapping (dual-emit)
 
@@ -129,7 +156,17 @@ Temporal headers.
 
 ### ThreadPoolExecutor parenting — RESOLVED by spike (not a risk)
 
-Concern was: the coarse activity runs sync in a `ThreadPoolExecutor`, and OTel
+> Update: the coarse activity drives the program via DSPy's async path
+> (`program.acall`) so in-program concurrency traces correctly — see "Concurrency &
+> nesting". It does so with `asyncio.run(...)` on its own worker-pool thread while
+> staying a **synchronous** activity (so the heartbeat watchdog — which beats from a
+> daemon thread — keeps working, and a sync-only program can't block the worker's
+> shared event loop). The throwaway loop's contextvar context still carries
+> `ACTIVE_CALL_ID` into `asyncio.gather` children. So the spike below (the
+> sync-activity `ThreadPoolExecutor` case) applies directly, and the integration
+> test still guards the parenting.
+
+Original concern: the coarse activity runs sync in a `ThreadPoolExecutor`, and OTel
 context is a `ContextVar` that doesn't auto-propagate into executor threads — so
 the activity span might not be current in the worker thread, orphaning the dspy
 spans.

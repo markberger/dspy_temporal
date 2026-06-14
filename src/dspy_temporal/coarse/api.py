@@ -26,7 +26,7 @@ import dspy
 from temporalio import workflow
 from temporalio.client import Client
 
-from ..config import CallOptions, RunConfig, RunMode
+from ..config import CallOptions, RunConfig, RunMode, run_program_async_or_sync
 from ..execute import execute_coarse, execute_fine
 from ..fine.workflow import DSPyProgramFineWorkflow
 from ..models import ProgramCallInput
@@ -75,7 +75,9 @@ class TemporalProgram:
         program = default_registry().build(self.name)
         if self.config.mode == RunMode.FINE:
             return await program.acall(**inputs)
-        return program(**inputs)
+        # Coarse: prefer the async path (so concurrent sub-calls trace correctly),
+        # falling back to the sync call for forward-only modules.
+        return await run_program_async_or_sync(program, inputs)
 
     async def start(
         self,
