@@ -2,7 +2,15 @@
 
 Registered via ``dspy.settings.callbacks`` (a first-class extension point, no
 monkeypatching). Span nesting follows DSPy's ``ACTIVE_CALL_ID`` explicitly (via a
-shared call_id -> span map) so it is robust to DSPy's internal worker threads.
+shared call_id -> span map). ``ACTIVE_CALL_ID`` is a ContextVar, so nesting holds
+on the synchronous path and across ``asyncio.gather`` (asyncio copies the context
+into each Task), but NOT across ``dspy.Parallel``'s ``ThreadPoolExecutor`` -- which
+does not copy contextvars, so parallel sub-calls orphan into new trace roots. For a
+correct trace tree under concurrency, drive the program via the async interface
+(``acall``/``aforward`` + ``asyncio.gather``) rather than ``dspy.Parallel``; the
+coarse activity does this by default. See docs/tracing-design.md ("Concurrency &
+nesting").
+
 The root span parents to whatever OTel context is current -- inside the activity
 that is the Temporal activity span (covered by tests/integration/test_tracing_workflow.py).
 

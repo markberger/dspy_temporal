@@ -94,6 +94,38 @@ def clear_worker_lm() -> None:
     _WORKER_LM = None
 
 
+# --- Program execution: prefer DSPy's async path ----------------------------
+# Running a program via ``acall`` (not the sync ``__call__``) is what makes
+# in-program concurrency traceable: ``asyncio.gather`` over ``.acall`` copies the
+# contextvar context into each Task (PEP 567), so DSPy's ``ACTIVE_CALL_ID``
+# propagates and the tracing callback nests spans correctly. ``dspy.Parallel``'s
+# ``ThreadPoolExecutor`` does NOT copy contextvars, so it orphans spans -- prefer
+# async concurrency when you want a correct trace tree (see docs/tracing-design.md).
+
+
+def supports_async(program) -> bool:
+    """True if ``program`` implements DSPy's async path (``aforward``).
+
+    Base ``dspy.Module`` defines no ``aforward``; built-ins (``Predict`` /
+    ``ChainOfThought`` / ``ReAct``) and async-aware custom modules do. The check is
+    side-effect-free, so we can pick the path without partially running the program.
+    """
+    return hasattr(type(program), "aforward")
+
+
+async def run_program_async_or_sync(program, inputs: dict):
+    """Run ``program`` on its async path when available, else synchronously.
+
+    Prefer ``acall`` so concurrent sub-calls (``asyncio.gather`` over ``.acall``)
+    nest correctly in traces; modules that implement only ``forward`` fall back to
+    the synchronous call. Both paths wrap the run in ``track_usage`` (DSPy does this
+    inside ``__call__``/``acall``), so ``prediction.get_lm_usage()`` works either way.
+    """
+    if supports_async(program):
+        return await program.acall(**inputs)
+    return program(**inputs)
+
+
 # --- Worker-side tracing callback -------------------------------------------
 # Mirrors the worker-LM accessor pattern above (module-global + set/get/clear).
 # Holds the optional DSPy tracing callback as a plain object reference. Kept here
