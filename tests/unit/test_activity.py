@@ -14,19 +14,20 @@ from dspy_temporal.coarse.activities import run_program_activity
 from dspy_temporal.models import ProgramCallInput, ProgramCallOutput
 
 
-def test_run_program_activity_returns_prediction(qa_program):
+async def test_run_program_activity_returns_prediction(qa_program):
     env = ActivityEnvironment()
     call = ProgramCallInput(program="qa", inputs={"question": "color of the sky?"})
 
-    # The activity is synchronous, so ActivityEnvironment.run returns directly.
-    output = env.run(run_program_activity, call)
+    # The activity is async (it runs the program via acall), so
+    # ActivityEnvironment.run returns a coroutine to await.
+    output = await env.run(run_program_activity, call)
 
     assert isinstance(output, ProgramCallOutput)
     assert output.prediction["answer"] == "blue"
     assert "reasoning" in output.prediction
 
 
-def test_runs_normally_with_heartbeat_timeout_set(qa_program):
+async def test_runs_normally_with_heartbeat_timeout_set(qa_program):
     """The original bug: setting heartbeat_timeout made every coarse run fail.
 
     With the watchdog wrapping the program call, a configured heartbeat_timeout no
@@ -38,20 +39,20 @@ def test_runs_normally_with_heartbeat_timeout_set(qa_program):
     env.info = dataclasses.replace(env.info, heartbeat_timeout=timedelta(seconds=2))
     call = ProgramCallInput(program="qa", inputs={"question": "color of the sky?"})
 
-    output = env.run(run_program_activity, call)
+    output = await env.run(run_program_activity, call)
 
     assert isinstance(output, ProgramCallOutput)
     assert output.prediction["answer"] == "blue"
 
 
-def test_unknown_program_raises(qa_program):
+async def test_unknown_program_raises(qa_program):
     env = ActivityEnvironment()
     call = ProgramCallInput(program="does-not-exist", inputs={})
     with pytest.raises(KeyError):
-        env.run(run_program_activity, call)
+        await env.run(run_program_activity, call)
 
 
-def test_predictor_own_lm_wins_over_worker_lm():
+async def test_predictor_own_lm_wins_over_worker_lm():
     """A predictor's bound .lm takes precedence over the worker default LM."""
 
     def build():
@@ -62,14 +63,14 @@ def test_predictor_own_lm_wins_over_worker_lm():
     dt.register_program("ownlm", build)
     dt.set_worker_lm(DummyLM([{"reasoning": "r", "answer": "blue"}] * 5))
 
-    output = ActivityEnvironment().run(
+    output = await ActivityEnvironment().run(
         run_program_activity,
         ProgramCallInput(program="ownlm", inputs={"question": "?"}),
     )
     assert output.prediction["answer"] == "red"
 
 
-def test_tracing_callback_not_double_added(qa_program):
+async def test_tracing_callback_not_double_added(qa_program):
     """If the same callback is also registered on dspy.settings, the activity
     applies it once, not twice (a double-add would double-emit every span)."""
     seen = {}
@@ -85,7 +86,7 @@ def test_tracing_callback_not_double_added(qa_program):
     # Simulate the callback already being present in dspy.settings.callbacks so
     # the activity must dedupe rather than append a second copy.
     with dspy.context(callbacks=[cb]):
-        ActivityEnvironment().run(
+        await ActivityEnvironment().run(
             run_program_activity,
             ProgramCallInput(program="qa", inputs={"question": "?"}),
         )
@@ -100,12 +101,16 @@ class _StaticProgram(dspy.Module):
         return dspy.Prediction(answer="static")
 
 
-def test_no_worker_lm_and_no_usage():
-    """Covers the no-worker-LM branch and the lm_usage -> None path."""
+async def test_no_worker_lm_and_no_usage():
+    """Covers the no-worker-LM branch and the lm_usage -> None path.
+
+    ``_StaticProgram`` implements only ``forward`` (no ``aforward``), so this also
+    exercises the synchronous fallback in ``run_program_async_or_sync``.
+    """
     dt.clear_worker_lm()
     dt.register_program("static", _StaticProgram)
 
-    output = ActivityEnvironment().run(
+    output = await ActivityEnvironment().run(
         run_program_activity,
         ProgramCallInput(program="static", inputs={}),
     )
