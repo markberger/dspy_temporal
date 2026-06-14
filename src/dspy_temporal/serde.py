@@ -1,10 +1,9 @@
 """Serialization helpers for moving DSPy values across the Temporal boundary.
 
-DSPy ``Prediction`` objects are backed by a plain ``_store`` dict (see
-``dspy/primitives/prediction.py``), but the values may be pydantic models or
-other rich types. Temporal payloads must be JSON-native, so we normalize the
-store into JSON-safe primitives on the way out and reconstruct a ``Prediction``
-on the way back in.
+DSPy ``Prediction`` objects are backed by a plain ``_store`` dict, but the values
+may be pydantic models or other rich types. Temporal payloads must be JSON-native,
+so we normalize the store into JSON-safe primitives on the way out and reconstruct
+a ``Prediction`` on the way back in.
 """
 
 from __future__ import annotations
@@ -12,8 +11,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from dspy.primitives.prediction import Prediction
+from dspy import Prediction
 from pydantic import BaseModel
+
+# Credentials never belong on the Temporal wire. litellm reads keys from env at
+# call time, so dropping these is safe; this is the single source of truth shared
+# with the fine activities (``fine.activities`` imports it from here -- the import
+# direction is activities -> serde, so the constant lives here to avoid a cycle).
+# Both ``json_safe`` and ``encode_lm_kwargs`` drop these as defense-in-depth, so a
+# secret stashed in a predictor ``config`` never gets JSON-encoded into history.
+_SECRET_KWARGS = ("api_key", "api_base", "base_url")
 
 
 def _jsonify(value: Any) -> Any:
@@ -80,6 +87,8 @@ def json_safe(kwargs: dict[str, Any]) -> dict[str, Any]:
     """
     safe: dict[str, Any] = {}
     for key, value in kwargs.items():
+        if key in _SECRET_KWARGS:  # defense-in-depth: never let a secret through
+            continue
         try:
             json.dumps(value)
         except (TypeError, ValueError):
@@ -107,6 +116,10 @@ def encode_lm_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     """
     out: dict[str, Any] = {}
     for key, value in kwargs.items():
+        # Drop secrets first, so a credential never survives even via the
+        # response_format branch below (defense-in-depth alongside the LMSpec filter).
+        if key in _SECRET_KWARGS:
+            continue
         if (
             key == "response_format"
             and isinstance(value, type)

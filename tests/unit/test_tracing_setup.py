@@ -42,6 +42,54 @@ def test_setup_tracing_does_not_override_installed_global(monkeypatch):
     assert set_calls == []  # never attempted to override the installed global
 
 
+def test_setup_tracing_reuses_installed_global_provider(monkeypatch):
+    """tracer_provider=None + no exporter + an SDK provider already installed:
+    reuse that provider as-is (don't build or override)."""
+    from opentelemetry import trace as trace_api
+
+    installed = TracerProvider()
+    installed.add_span_processor(SimpleSpanProcessor(InMemorySpanExporter()))
+    monkeypatch.setattr(trace_api, "get_tracer_provider", lambda: installed)
+    set_calls = []
+    monkeypatch.setattr(trace_api, "set_tracer_provider", set_calls.append)
+
+    interceptor = setup_tracing(set_global=True)
+
+    assert isinstance(interceptor, TracingInterceptor)
+    # The reused provider became our flush handle; we never set a new global.
+    assert core_config.get_tracing_shutdown() == installed.force_flush
+    assert set_calls == []
+
+
+def test_setup_tracing_builds_and_promotes_global(monkeypatch):
+    """No SDK provider installed yet -> build one and promote it to the global."""
+    from opentelemetry import trace as trace_api
+
+    # A non-SDK default (e.g. the proxy provider) is what's installed pre-setup.
+    monkeypatch.setattr(trace_api, "get_tracer_provider", lambda: object())
+    set_calls = []
+    monkeypatch.setattr(trace_api, "set_tracer_provider", set_calls.append)
+
+    interceptor = setup_tracing(exporter=InMemorySpanExporter(), set_global=True)
+
+    assert isinstance(interceptor, TracingInterceptor)
+    assert len(set_calls) == 1  # promoted the freshly built provider to global
+
+
+def test_setup_tracing_sets_global_for_passed_provider(monkeypatch):
+    """An explicit tracer_provider + set_global=True promotes it to the global."""
+    from opentelemetry import trace as trace_api
+
+    set_calls = []
+    monkeypatch.setattr(trace_api, "set_tracer_provider", set_calls.append)
+    provider = TracerProvider()
+
+    interceptor = setup_tracing(tracer_provider=provider, set_global=True)
+
+    assert isinstance(interceptor, TracingInterceptor)
+    assert set_calls == [provider]
+
+
 def test_clear_tracing_callback_roundtrip():
     setup_tracing(
         tracer_provider=TracerProvider(), set_global=False, register_callback=True
@@ -68,6 +116,32 @@ def test_setup_tracing_can_skip_callback_registration():
     )
     assert isinstance(interceptor, TracingInterceptor)
     assert core_config.get_tracing_callback() is None
+
+
+# --- #17 item 4: span flush on worker stop ----------------------------------
+
+
+def test_setup_tracing_registers_flush_handle():
+    """By default setup_tracing registers the provider's force_flush as the
+    worker-stop shutdown hook, and calling it flushes buffered spans."""
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(InMemorySpanExporter()))
+
+    setup_tracing(tracer_provider=provider, set_global=False)
+
+    flush = core_config.get_tracing_shutdown()
+    assert flush == provider.force_flush
+    assert flush() is True  # force_flush succeeds (nothing buffered to drain)
+
+
+def test_setup_tracing_opt_out_leaves_shutdown_unset():
+    """flush_on_worker_stop=False leaves no shutdown hook registered (for a
+    provider the caller manages/reuses elsewhere)."""
+    provider = TracerProvider()
+    setup_tracing(
+        tracer_provider=provider, set_global=False, flush_on_worker_stop=False
+    )
+    assert core_config.get_tracing_shutdown() is None
 
 
 def test_capture_content_explicit_overrides_env(monkeypatch):

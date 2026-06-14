@@ -145,7 +145,12 @@ def test_configure_replayer_adds_workflows_runner_and_converter():
 
 
 @pytest.mark.asyncio
-async def test_plugin_run_worker_is_passthrough():
+async def test_plugin_run_worker_is_noop_without_shutdown():
+    """With no tracing-shutdown registered, run_worker is a pure passthrough
+    (returns next's result, no error)."""
+    from dspy_temporal import config as core_config
+
+    core_config.clear_tracing_shutdown()
     plugin = DSPyPlugin()
     seen = {}
 
@@ -156,6 +161,24 @@ async def test_plugin_run_worker_is_passthrough():
     result = await plugin.run_worker("the-worker", fake_next)
     assert result == "ran"
     assert seen["worker"] == "the-worker"
+
+
+@pytest.mark.asyncio
+async def test_plugin_run_worker_flushes_registered_shutdown_once():
+    """A registered tracing-shutdown is invoked exactly once on worker stop, and
+    run_worker still returns next's result."""
+    from dspy_temporal import config as core_config
+
+    calls = {"n": 0}
+    core_config.set_tracing_shutdown(lambda: calls.__setitem__("n", calls["n"] + 1))
+    plugin = DSPyPlugin()
+
+    async def fake_next(worker):
+        return "ran"
+
+    result = await plugin.run_worker("the-worker", fake_next)
+    assert result == "ran"
+    assert calls["n"] == 1
 
 
 def test_plugin_run_replayer_is_passthrough():

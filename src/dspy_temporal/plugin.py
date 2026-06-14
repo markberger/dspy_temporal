@@ -151,7 +151,18 @@ class DSPyPlugin(temporalio.client.Plugin, temporalio.worker.Plugin):
         return config
 
     async def run_worker(self, worker, next):
-        return await next(worker)
+        # The try/finally seam is the documented Temporal plugin pattern: on
+        # graceful worker stop we force-flush any registered tracer provider so the
+        # last activities' spans aren't lost. The import is core-only (no OTel); the
+        # flush is registered by the tracing subpackage's setup_tracing.
+        try:
+            return await next(worker)
+        finally:
+            from .config import get_tracing_shutdown
+
+            fn = get_tracing_shutdown()
+            if fn is not None:
+                fn()
 
     # --- replayer ------------------------------------------------------------
 

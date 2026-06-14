@@ -21,6 +21,7 @@ without ever putting an LM or its credentials on the wire.
 
 from __future__ import annotations
 
+import copy
 import threading
 from typing import Any
 
@@ -39,7 +40,7 @@ from ..models import (
     ToolCallOutput,
 )
 from ..registry import all_named_predictors, default_registry
-from ..serde import _jsonify, decode_lm_kwargs, json_safe
+from ..serde import _SECRET_KWARGS, _jsonify, decode_lm_kwargs, json_safe
 
 # Sentinel ``lm_ref`` for the worker default LM (predictors with no bound ``.lm``).
 DEFAULT_LM_REF = "__default__"
@@ -50,9 +51,9 @@ _NO_WORKER_LM = (
     "worker startup."
 )
 
-# Credentials never belong in an LMSpec (it crosses to the workflow). litellm
-# reads keys from env at call time, so dropping these is safe.
-_SECRET_KWARGS = ("api_key", "api_base", "base_url")
+# ``_SECRET_KWARGS`` (api_key/api_base/base_url) is the single source of truth in
+# ``..serde``. ``_spec_for`` keeps its explicit pre-filter below as belt-and-
+# suspenders; ``serde.json_safe``/``encode_lm_kwargs`` also drop these keys.
 
 # program name -> {predictor_name: bound .lm or None}. Memoizes the
 # predictor->LM mapping so lm_call_activity doesn't rebuild the program every
@@ -211,9 +212,17 @@ def _build_lm_map(program_name: str) -> dict[str, Any]:
 def lm_call_activity(call: LMCallInput) -> LMCallOutput:
     base = _resolve_lm(call.program, call.lm_ref)
 
-    # copy() => an isolated dspy.LM with its own (empty) history, so history[-1]
-    # is unambiguously this call's even under concurrent activities.
-    lm = base.copy()
+    # Shallow-clone the resolved LM but give it a FRESH, private history, so
+    # ``history[-1]`` is unambiguously this call's even when many activities race
+    # in the shared ThreadPoolExecutor. We avoid ``base.copy()`` (a full deepcopy)
+    # because it's needless per call: the forward path reads ``self.kwargs`` /
+    # ``self.callbacks`` only via ``{**self.kwargs, **kwargs}`` and never mutates
+    # them in place, so sharing those by reference is safe. The per-call OTel span
+    # attribution in ``tracing/callback.py`` DEPENDS on this one-entry history (it
+    # drops attribution when ``len(new_entries) != 1``) -- do NOT "optimize" the
+    # ``history = []`` reset away.
+    lm = copy.copy(base)
+    lm.history = []
 
     with heartbeating(), dspy.context(**_with_tracing_callback({})):
         outputs = lm(

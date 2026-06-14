@@ -127,3 +127,29 @@ def get_tracing_callback():
 def clear_tracing_callback() -> None:
     global _TRACING_CALLBACK
     _TRACING_CALLBACK = None
+
+
+# --- Worker-side tracing shutdown hook --------------------------------------
+# A plain callable (no args) the plugin's ``run_worker`` invokes in its ``finally``
+# on graceful worker stop, so spans buffered by a BatchSpanProcessor aren't lost
+# when the process outlives the worker. Held here as an opaque callable -- like the
+# tracing callback above -- so the core keeps OpenTelemetry OUT of its import path;
+# the tracing subpackage registers ``provider.force_flush`` (idempotent, safe on a
+# shared provider) when it builds/resolves a provider.
+
+_TRACING_SHUTDOWN = None
+
+
+def set_tracing_shutdown(fn) -> None:
+    """Register the no-arg flush callable invoked on graceful worker stop."""
+    global _TRACING_SHUTDOWN
+    _TRACING_SHUTDOWN = fn
+
+
+def get_tracing_shutdown():
+    return _TRACING_SHUTDOWN
+
+
+def clear_tracing_shutdown() -> None:
+    global _TRACING_SHUTDOWN
+    _TRACING_SHUTDOWN = None

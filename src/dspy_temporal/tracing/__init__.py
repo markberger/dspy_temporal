@@ -28,6 +28,7 @@ def setup_tracing(
     register_callback: bool = True,
     set_global: bool = True,
     always_create_workflow_spans: bool = True,
+    flush_on_worker_stop: bool = True,
 ):
     """Configure tracing and return the Temporal ``TracingInterceptor``.
 
@@ -51,6 +52,13 @@ def setup_tracing(
             overriding it).
         always_create_workflow_spans: create workflow/activity spans even when the
             client call has no parent span, so each execution is a full trace.
+        flush_on_worker_stop: register ``provider.force_flush`` so the plugin
+            force-flushes buffered spans on graceful worker stop (a
+            ``BatchSpanProcessor`` otherwise only flushes on its timer / ``atexit``,
+            losing the last activities' spans when the process outlives the worker).
+            We use ``force_flush`` (idempotent, safe on a reused/user-owned provider)
+            rather than ``shutdown`` (which would tear down a shared provider). Set
+            False if you manage flushing yourself for a provider you reuse elsewhere.
     """
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
@@ -79,6 +87,11 @@ def setup_tracing(
         trace.set_tracer_provider(tracer_provider)
 
     tracer = tracer_provider.get_tracer("dspy_temporal.tracing")
+
+    # Register a force-flush so the plugin can drain buffered spans on worker stop.
+    # force_flush (not shutdown) is idempotent and safe on a reused/user provider.
+    if flush_on_worker_stop and hasattr(tracer_provider, "force_flush"):
+        core_config.set_tracing_shutdown(tracer_provider.force_flush)
 
     if register_callback:
         core_config.set_tracing_callback(

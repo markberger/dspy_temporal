@@ -18,7 +18,7 @@ from dspy_temporal.registry import (
 
 @pytest.fixture(autouse=True)
 def reset_worker_lm():
-    """Snapshot/restore worker LM + tracing callback around each test.
+    """Snapshot/restore worker LM + tracing callback + shutdown around each test.
 
     The fine-mode LM-map cache eviction is NOT done here: it lives in
     ``restore_registry``'s teardown, co-located with the registry rollback it
@@ -27,11 +27,13 @@ def reset_worker_lm():
     """
     saved_lm = config_mod.get_worker_lm()
     saved_cb = config_mod.get_tracing_callback()
+    saved_shutdown = config_mod.get_tracing_shutdown()
     try:
         yield
     finally:
         config_mod._WORKER_LM = saved_lm
         config_mod._TRACING_CALLBACK = saved_cb
+        config_mod._TRACING_SHUTDOWN = saved_shutdown
 
 
 @pytest.fixture(autouse=True)
