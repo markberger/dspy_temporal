@@ -77,6 +77,29 @@ def test_lm_call_activity_returns_outputs_and_usage(dummy_lm):
     assert output.response_model == "dummy"
 
 
+def test_secret_kwargs_is_single_source_of_truth():
+    """fine.activities re-uses serde's _SECRET_KWARGS (one canonical definition)."""
+    from dspy_temporal import serde
+
+    assert fine_activities._SECRET_KWARGS is serde._SECRET_KWARGS
+
+
+def test_lm_call_activity_isolates_base_worker_lm_history(dummy_lm):
+    """Two lm_call_activity calls leave the BASE worker LM's history EMPTY.
+
+    Each call runs on a shallow clone with a fresh private history, so the worker
+    LM the workflow shares across activities never accumulates entries (which would
+    make history[-1] attribution ambiguous under concurrency)."""
+    dt.set_worker_lm(dummy_lm)
+    env = ActivityEnvironment()
+    call = LMCallInput(messages=[{"role": "user", "content": "color of the sky?"}])
+
+    env.run(lm_call_activity, call)
+    env.run(lm_call_activity, call)
+
+    assert dummy_lm.history == []  # base LM untouched; clones carried the history
+
+
 def test_lm_call_activity_without_worker_lm_raises():
     clear_worker_lm()
     env = ActivityEnvironment()

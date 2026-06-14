@@ -41,3 +41,16 @@ def test_worker_lm_set_get_clear():
     assert cfg.get_worker_lm() is lm
     cfg.clear_worker_lm()
     assert cfg.get_worker_lm() is None
+
+
+def test_tracing_shutdown_set_get_clear():
+    """The tracing-shutdown hook is a plain set/get/clear of an opaque callable."""
+    assert cfg.get_tracing_shutdown() is None  # autouse fixture leaves it unset
+
+    def flush():  # pragma: no cover - never invoked here, just stored
+        pass
+
+    cfg.set_tracing_shutdown(flush)
+    assert cfg.get_tracing_shutdown() is flush
+    cfg.clear_tracing_shutdown()
+    assert cfg.get_tracing_shutdown() is None

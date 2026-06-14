@@ -5,7 +5,9 @@ import json
 import dspy
 from pydantic import BaseModel
 
+from dspy_temporal import serde
 from dspy_temporal.serde import (
+    _SECRET_KWARGS,
     _jsonify,
     decode_lm_kwargs,
     dict_to_prediction,
@@ -148,3 +150,47 @@ def test_decode_lm_kwargs_passes_through_plain_values():
         {"temperature": 0.0, "response_format": {"type": "json_object"}}
     )
     assert decoded == {"temperature": 0.0, "response_format": {"type": "json_object"}}
+
+
+# --- #17 item 1: public dspy.Prediction --------------------------------------
+
+
+def test_serde_uses_public_prediction():
+    # serde now imports the top-level dspy.Prediction (not the private module path).
+    assert serde.Prediction is dspy.Prediction
+
+
+# --- #17 item 2: secret filtering (defense-in-depth) -------------------------
+
+
+def test_json_safe_drops_secret_kwargs_keeps_normal():
+    # A credential stashed alongside normal kwargs is dropped; ordinary kwargs stay.
+    out = json_safe(
+        {
+            "api_key": "sk-secret",
+            "api_base": "https://x",
+            "base_url": "https://y",
+            "temperature": 0.0,
+        }
+    )
+    json.dumps(out)
+    assert out == {"temperature": 0.0}
+    for key in _SECRET_KWARGS:
+        assert key not in out
+
+
+def test_encode_lm_kwargs_drops_secret():
+    out = encode_lm_kwargs({"api_key": "sk-secret", "temperature": 0.0})
+    json.dumps(out)
+    assert out == {"temperature": 0.0}
+    assert "api_key" not in out
+
+
+def test_encode_lm_kwargs_drops_secret_even_with_response_format():
+    # A secret never survives -- even when a structured response_format is also
+    # present (the secret drop is checked before the response_format branch).
+    out = encode_lm_kwargs({"api_key": "sk-secret", "response_format": _Meta})
+    json.dumps(out)
+    assert "api_key" not in out
+    marker = out["response_format"]["__dspy_temporal_response_format__"]
+    assert marker["name"] == "_Meta"
