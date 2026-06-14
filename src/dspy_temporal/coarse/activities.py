@@ -13,6 +13,7 @@ import dspy
 from temporalio import activity
 
 from ..config import get_tracing_callback, get_worker_lm
+from ..heartbeat import heartbeating
 from ..models import ProgramCallInput, ProgramCallOutput
 from ..registry import default_registry
 from ..serde import prediction_to_dict
@@ -43,7 +44,10 @@ def run_program_activity(call: ProgramCallInput) -> ProgramCallOutput:
             callbacks.append(tracing_callback)
         ctx_kwargs["callbacks"] = callbacks
 
-    with dspy.context(**ctx_kwargs):
+    # A background thread heartbeats while the (blocking) program runs, so a
+    # configured heartbeat_timeout keeps the activity alive instead of timing it
+    # out. No-op when no heartbeat_timeout is set.
+    with heartbeating(), dspy.context(**ctx_kwargs):
         prediction = program(**call.inputs)
 
     lm_usage = None

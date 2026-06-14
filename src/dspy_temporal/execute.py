@@ -69,9 +69,7 @@ async def _coarse_activity_call(
         ACTIVITY_NAME,
         call,
         result_type=ProgramCallOutput,
-        start_to_close_timeout=options.start_to_close_timeout(),
-        heartbeat_timeout=options.heartbeat_timeout(),
-        retry_policy=options.retry_policy(),
+        **options.activity_kwargs(),
     )
 
 
@@ -125,8 +123,7 @@ async def execute_fine(
         DESCRIBE_ACTIVITY_NAME,
         LMDescribeInput(program=name),
         result_type=LMSpecsOutput,
-        start_to_close_timeout=options.start_to_close_timeout(),
-        retry_policy=options.retry_policy(),
+        **options.activity_kwargs(),
     )
 
     program = default_registry().build(name)

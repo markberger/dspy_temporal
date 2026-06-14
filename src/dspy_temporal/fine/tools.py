@@ -55,7 +55,6 @@ class WorkflowTool(dspy.Tool):
                 args=json_safe(kwargs),
             ),
             result_type=ToolCallOutput,
-            start_to_close_timeout=self._options.start_to_close_timeout(),
-            retry_policy=self._options.retry_policy(),
+            **self._options.activity_kwargs(),
         )
         return out.observation
