@@ -17,8 +17,8 @@ def build_qa() -> dspy.Module:
     return dspy.ChainOfThought("question -> answer")
 
 
-qa = dt.deploy_module(
-    "qa",
+qa = dt.deploy(
     build_qa,
+    name="qa",
     config=dt.RunConfig(task_queue=TASK_QUEUE),
 )

@@ -6,7 +6,7 @@ __version__ = "0.1.0"
 
 from .client import run_program
 from .coarse.activities import run_program_activity
-from .coarse.api import TemporalProgram, deploy, deploy_module
+from .coarse.api import TemporalProgram, deploy
 from .coarse.workflow import DSPyProgramWorkflow
 from .config import (
     CallOptions,
@@ -40,49 +40,31 @@ from .plugin import DSPY_ACTIVITIES, DSPY_WORKFLOWS, DSPyPlugin
 from .registry import ProgramRegistry, default_registry, register_program
 from .worker import build_worker
 
-__all__ = [  # noqa: RUF022 -- grouped by concern with section comments, not alphabetized
+# ``__all__`` is the *headline* surface: the verbs a user needs for the common
+# path (deploy a program, run it, wire a worker, connect, pick a mode). Everything
+# imported above stays importable as ``dt.<name>`` -- the registry (``register_program``,
+# ``ProgramRegistry``, ``default_registry``), the wire models (``ProgramCallInput`` &
+# co.), the raw workflow/activity classes (``DSPY_ACTIVITIES`` / ``DSPY_WORKFLOWS``,
+# ``DSPyProgramWorkflow`` / ``run_program_activity`` / the fine-mode set), the
+# worker-LM setters (``set_worker_lm`` / ``get_worker_lm`` / ``clear_worker_lm``),
+# ``data_converter`` and ``CallOptions`` -- they are just kept out of the advertised
+# list to keep the core legible. (``__init__.py`` is F401-exempt so these re-exports
+# don't trip "imported but unused".)
+__all__ = [  # noqa: RUF022 -- grouped by concern, not alphabetized
     "__version__",
-    # auto-wrap API
+    # deploy + run a program
     "deploy",
-    "deploy_module",
-    "TemporalProgram",
-    "register_program",
     "run_program",
-    # compose-in-your-own-workflow
-    "execute_coarse",
-    "execute_fine",
+    "TemporalProgram",
     # worker / client
     "build_worker",
     "DSPyPlugin",
-    "DSPY_ACTIVITIES",
-    "DSPY_WORKFLOWS",
     "connect",
-    "data_converter",
     "configure_lm_from_env",
-    "set_worker_lm",
-    "get_worker_lm",
-    "clear_worker_lm",
-    # config / models
+    # config
     "RunConfig",
     "RunMode",
-    "CallOptions",
-    "ProgramCallInput",
-    "ProgramCallOutput",
-    "LMCallInput",
-    "LMCallOutput",
-    "LMSpec",
-    "LMDescribeInput",
-    "LMSpecsOutput",
-    "ToolCallInput",
-    "ToolCallOutput",
-    "ProgramRegistry",
-    "default_registry",
-    # workflow / activity (for custom worker wiring)
-    "DSPyProgramWorkflow",
-    "run_program_activity",
-    # fine mode
-    "DSPyProgramFineWorkflow",
-    "describe_lms_activity",
-    "lm_call_activity",
-    "tool_call_activity",
+    # compose a deployed program into your own workflow
+    "execute_coarse",
+    "execute_fine",
 ]

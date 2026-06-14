@@ -77,7 +77,7 @@ class ProgramRegistry:
             raise KeyError(
                 f"No program registered under {name!r}. Registered: "
                 f"{sorted(self._builders)}. Did the worker import the module that "
-                f"calls deploy_module()/register_program()?"
+                f"calls deploy()/register_program()?"
             ) from None
         module = builder()
         if not isinstance(module, dspy.Module):
@@ -94,7 +94,7 @@ class ProgramRegistry:
         return name in self._builders
 
 
-# Process-global default registry. deploy_module()/register_program() populate
+# Process-global default registry. deploy()/register_program() populate
 # this; the activity reads from it at runtime.
 _DEFAULT_REGISTRY = ProgramRegistry()
 

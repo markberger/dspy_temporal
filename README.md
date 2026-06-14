@@ -54,9 +54,9 @@ for the rules.
 import dspy
 import dspy_temporal as dt
 
-qa = dt.deploy_module(
-    "qa",
+qa = dt.deploy(
     lambda: dspy.ChainOfThought("question -> answer"),
+    name="qa",
     config=dt.RunConfig(task_queue="dspy-temporal"),
 )
 ```
@@ -96,12 +96,12 @@ A runnable example lives in `examples/` (`qa_program.py`, `worker.py`, `run.py`)
 
 ## More ways to deploy, run, and wire
 
-The `deploy_module` / `run_program` / `build_worker` trio above is the stable baseline. Three
-additive conveniences layer on top — each is optional, and nothing about the baseline changes.
+The `deploy` / `run_program` / `build_worker` trio above is the stable baseline. A few
+conveniences layer on top — each is optional, and nothing about the baseline changes.
 
 ### Deploy a live (or compiled) module instance
 
-`deploy_module` takes a zero-arg builder; **`deploy` also accepts a live `dspy.Module`
+The headline `deploy` above takes a zero-arg builder; **it also accepts a live `dspy.Module`
 instance** — handy for a program you've optimized with a DSPy teleprompter, whose predictors
 carry few-shot demos. The instance stays in worker memory as a prototype; each run gets a
 fresh, LM-stripped `deepcopy` (demos preserved, no bound LM or API key ever serialized into
@@ -121,7 +121,7 @@ keywords. Runnable example: `examples/deploy_instance.py`.
 
 ### Compose a deployed program inside your OWN workflow
 
-The handle returned by `deploy`/`deploy_module` has a **context-aware** `await
+The handle returned by `deploy` has a **context-aware** `await
 agent.run(**inputs)`:
 
 - **inside a user-authored `@workflow.defn`** it dispatches our activities inline, so you can
@@ -150,13 +150,12 @@ class ResearchWorkflow:
 ```
 
 Register the user workflow on the worker with `build_worker(..., extra_workflows=[ResearchWorkflow])`
-(or the plugin below). The standalone path is unchanged: `await agent.start(client, {...})`
-starts our generic program workflow on a client, exactly like
-`run_program`. If you'd rather compose without a handle, `dt.execute_coarse` /
-`dt.execute_fine` are exported too. Runnable example: `examples/compose_program.py` +
-`examples/run_compose.py`.
+(or the plugin below). To start a deployed program as a standalone workflow from a client, use
+`await dt.run_program(client, "compose_qa", {...})`. If you'd rather compose without a handle,
+`dt.execute_coarse` / `dt.execute_fine` are exported too. Runnable example:
+`examples/compose_program.py` + `examples/run_compose.py`.
 
-### Wire a worker with a plugin
+### Wire with a plugin (client + worker)
 
 If you already construct your own `temporalio.worker.Worker` (custom interceptors, tuning, your
 own workflows/activities), add DSPy support with `DSPyPlugin` instead of `build_worker`:
@@ -168,12 +167,24 @@ import dspy_temporal as dt
 worker = Worker(client, task_queue="dspy-temporal", plugins=[dt.DSPyPlugin()])
 ```
 
-The plugin contributes the same four activities, both generic workflows, and the DSPy sandbox
-runner — **extending** (never overwriting) anything you pass explicitly. Add your own composed
-workflows via `DSPyPlugin(extra_workflows=[ResearchWorkflow])` and extra sandbox-passthrough
-prefixes via `DSPyPlugin(extra_passthrough_modules=("my_pkg",))`. `build_worker` stays the
-one-call path and shares the exact same activity/workflow set (`dt.DSPY_ACTIVITIES` /
-`dt.DSPY_WORKFLOWS`). Runnable example: `examples/worker_plugin.py`.
+`DSPyPlugin` is a **combined client + worker plugin**: passed to the **client** it installs the
+pydantic data converter *and*, because it's also a worker plugin, propagates to any `Worker`
+built from that client — so over a vanilla `Client.connect()` you'd pass it there to keep
+pydantic models round-tripping:
+
+```python
+client = await Client.connect("localhost:7233", plugins=[dt.DSPyPlugin()])
+worker = Worker(client, task_queue="dspy-temporal")   # DSPy set added automatically
+```
+
+(`dt.connect()` already sets the converter, so over it the plugin is worker-only.) Apply it on
+the client **or** a `Worker`/`Replayer` directly — not both. The plugin contributes the same
+four activities, both generic workflows, and the DSPy sandbox runner — **extending** (never
+overwriting) anything you pass explicitly. Add your own composed workflows via
+`DSPyPlugin(extra_workflows=[ResearchWorkflow])` and extra sandbox-passthrough prefixes via
+`DSPyPlugin(extra_passthrough_modules=("my_pkg",))`. `build_worker` stays the one-call path (it
+builds its worker through this same plugin) and shares the exact same activity/workflow set
+(`dt.DSPY_ACTIVITIES` / `dt.DSPY_WORKFLOWS`). Runnable example: `examples/worker_plugin.py`.
 
 ## Fine-grained mode
 
@@ -202,15 +213,14 @@ def build_agent() -> dspy.Module:
     # The builder runs in the WORKFLOW: only construct dspy objects here — no network/file/DB.
     return dspy.ReAct("question -> answer", tools=[get_weather])
 
-agent = dt.deploy_module("weather_agent", build_agent,
-                         config=dt.RunConfig(task_queue="dspy-temporal", mode=dt.RunMode.FINE))
+agent = dt.deploy(build_agent, name="weather_agent",
+                  config=dt.RunConfig(task_queue="dspy-temporal", mode=dt.RunMode.FINE))
 ```
 
 The same worker serves both modes (it registers both workflows and all activities), so no
-worker change is needed. Run it the usual way — `run_program(..., mode=RunMode.FINE)` or
-`agent.start(client, {...})`. In the Temporal UI you'll see distinct `dspy_lm_call` /
-`dspy_tool_call` activities per run. A runnable example is in `examples/`
-(`react_program.py`, `run_react.py`).
+worker change is needed. Run it the usual way — `run_program(..., mode=RunMode.FINE)`. In the
+Temporal UI you'll see distinct `dspy_lm_call` / `dspy_tool_call` activities per run. A
+runnable example is in `examples/` (`react_program.py`, `run_react.py`).
 
 **Where each piece runs:** the tool *bodies* and the LM HTTP calls run in activities (real
 I/O allowed); the builder, the ReAct loop, and adapter format/parse run in the workflow as

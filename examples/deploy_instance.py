@@ -1,10 +1,11 @@
 """Deploy a live (possibly compiled) ``dspy.Module`` instance.
 
 ``dt.deploy`` accepts a ``dspy.Module`` *instance* -- e.g. a program you optimized
-with a DSPy teleprompter, whose predictors carry few-shot demos -- as well as the
-zero-arg builder ``deploy_module`` takes. The instance stays in worker memory as a
-prototype; each run gets a fresh, LM-stripped ``deepcopy`` (demos preserved, no
-bound LM or API key ever serialized into Temporal history).
+with a DSPy teleprompter, whose predictors carry few-shot demos -- as well as a
+zero-arg builder (e.g. ``lambda: dspy.ChainOfThought("question -> answer")``). The
+instance stays in worker memory as a prototype; each run gets a fresh, LM-stripped
+``deepcopy`` (demos preserved, no bound LM or API key ever serialized into Temporal
+history).
 
 Imported by ``examples/worker.py`` so the program registers at worker startup.
 """

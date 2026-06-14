@@ -75,9 +75,9 @@ async def test_fine_chain_of_thought_end_to_end(dummy_lm):
     only happens if WorkflowLM fed the usage tracker from the activity result.
     """
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
-    handle = dt.deploy_module(
-        "qa_fine",
+    dt.deploy(
         lambda: dspy.ChainOfThought("question -> answer"),
+        name="qa_fine",
         config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
     )
     dt.set_worker_lm(dummy_lm)
@@ -87,7 +87,13 @@ async def test_fine_chain_of_thought_end_to_end(dummy_lm):
     ) as env:
         worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
         async with worker:
-            pred = await handle.start(env.client, {"question": "color of the sky?"})
+            pred = await dt.run_program(
+                env.client,
+                "qa_fine",
+                {"question": "color of the sky?"},
+                task_queue=task_queue,
+                mode=dt.RunMode.FINE,
+            )
 
     assert pred.answer == "blue"
     assert pred.reasoning
@@ -102,9 +108,9 @@ async def test_fine_per_predictor_multi_lm(dummy_lm):
     worker default, the bound one uses its own LM -- visible as two distinct
     model keys in lm_usage (two separate dspy_lm_call activities)."""
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
-    handle = dt.deploy_module(
-        "two_stage",
+    dt.deploy(
         _TwoStage,
+        name="two_stage",
         config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
     )
     dt.set_worker_lm(_NamedDummyLM("model-fast", [{"topic": "weather"}] * 5))
@@ -114,7 +120,13 @@ async def test_fine_per_predictor_multi_lm(dummy_lm):
     ) as env:
         worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
         async with worker:
-            pred = await handle.start(env.client, {"question": "weather in Tokyo?"})
+            pred = await dt.run_program(
+                env.client,
+                "two_stage",
+                {"question": "weather in Tokyo?"},
+                task_queue=task_queue,
+                mode=dt.RunMode.FINE,
+            )
 
     assert pred.answer == "sunny"
     usage = pred.get_lm_usage()
@@ -130,9 +142,9 @@ async def test_fine_json_adapter_structured_output():
     parses back -- the ChatAdapter-only limitation is lifted."""
     _RF_SEEN.clear()
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
-    handle = dt.deploy_module(
-        "qa_json",
+    dt.deploy(
         lambda: dspy.Predict("question -> answer"),
+        name="qa_json",
         config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
     )
     # Worker LM claims response_format support and emits JSON-formatted answers.
@@ -150,7 +162,13 @@ async def test_fine_json_adapter_structured_output():
                 env.client, config=RunConfig(task_queue=task_queue)
             )
             async with worker:
-                pred = await handle.start(env.client, {"question": "color of the sky?"})
+                pred = await dt.run_program(
+                    env.client,
+                    "qa_json",
+                    {"question": "color of the sky?"},
+                    task_queue=task_queue,
+                    mode=dt.RunMode.FINE,
+                )
     finally:
         dspy.configure(adapter=saved_adapter)
 
