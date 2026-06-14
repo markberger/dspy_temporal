@@ -6,10 +6,18 @@ import uuid
 
 from temporalio.client import Client
 
-from .coarse.api import _workflow_run_for_mode
+from .coarse.workflow import DSPyProgramWorkflow
 from .config import CallOptions, RunMode
+from .fine.workflow import DSPyProgramFineWorkflow
 from .models import ProgramCallInput
 from .serde import dict_to_prediction, normalize_inputs
+
+
+def _workflow_run_for_mode(mode: RunMode):
+    """Pick the workflow entrypoint for a run mode (both take ProgramCallInput)."""
+    return (
+        DSPyProgramFineWorkflow.run if mode == RunMode.FINE else DSPyProgramWorkflow.run
+    )
 
 
 async def run_program(

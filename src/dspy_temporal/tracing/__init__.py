@@ -8,7 +8,7 @@ Usage (per Temporal docs, register the interceptor on the CLIENT only):
     from dspy_temporal.tracing import setup_tracing
     interceptor = setup_tracing(service_name="my-worker")
     client = await dt.connect("localhost:7233", interceptors=[interceptor])
-    worker = dt.build_worker(client, config=...)   # inherits the interceptor
+    worker = dt.build_worker(client, task_queue=...)   # inherits the interceptor
 """
 
 from __future__ import annotations

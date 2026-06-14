@@ -23,26 +23,14 @@ from dataclasses import dataclass
 import dspy
 from temporalio import workflow
 
+from ..client import run_program
 from ..config import RunMode, run_program_async_or_sync
 from ..execute import execute_coarse, execute_fine
-from ..fine.workflow import DSPyProgramFineWorkflow
 from ..options import CallOptions
 from ..registry import ModuleSource, default_registry, register_program
-from .workflow import DSPyProgramWorkflow
 
 
-def _workflow_run_for_mode(mode: RunMode):
-    """Pick the workflow entrypoint for a run mode (both take ProgramCallInput).
-
-    ``TemporalProgram`` is mode-agnostic; it just branches here rather than
-    moving out of the coarse package (avoids a churny re-home).
-    """
-    return (
-        DSPyProgramFineWorkflow.run if mode == RunMode.FINE else DSPyProgramWorkflow.run
-    )
-
-
-@dataclass
+@dataclass(kw_only=True)
 class TemporalProgram:
     """Handle returned by :func:`deploy`.
 
@@ -53,9 +41,7 @@ class TemporalProgram:
     """
 
     name: str
-    # Required: must precede the defaulted ``mode`` (a non-default dataclass
-    # field can't follow a defaulted one).
-    task_queue: str
+    task_queue: str  # required: the queue ``start`` dispatches to
     mode: RunMode = RunMode.COARSE
 
     async def run(self, **inputs) -> dspy.Prediction:
@@ -83,6 +69,7 @@ class TemporalProgram:
     async def start(
         self,
         client,
+        /,
         *,
         workflow_id: str | None = None,
         options: CallOptions | None = None,
@@ -93,11 +80,13 @@ class TemporalProgram:
         Uses the handle's own ``mode`` + ``task_queue`` -- the handle is the
         single source of truth, so the caller never re-passes them. Delegates to
         :func:`dspy_temporal.run_program` (the by-name escape hatch).
-        """
-        # Lazy import: client.py imports ``_workflow_run_for_mode`` from this
-        # module at top level, so a top-level back-import would form a cycle.
-        from ..client import run_program
 
+        Program inputs are passed as keywords (``handle.start(client,
+        question=...)``). ``client`` is positional-only so an input field may be
+        named ``client``; ``workflow_id`` and ``options`` are reserved control
+        knobs, so a program needing inputs by those names must use
+        :func:`dspy_temporal.run_program` (it takes inputs as an explicit dict).
+        """
         return await run_program(
             client,
             self.name,

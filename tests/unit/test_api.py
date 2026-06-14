@@ -161,6 +161,19 @@ async def test_start_honors_workflow_id_and_options_overrides():
     assert call["call"].options.maximum_attempts == 9
 
 
+@pytest.mark.asyncio
+async def test_start_input_named_client_is_not_swallowed():
+    """``client`` is positional-only, so a program input field literally named
+    ``client`` is forwarded as an input, not bound to start's own parameter."""
+    client = FakeClient()
+    handle = TemporalProgram(name="qa", task_queue="tq")
+
+    await handle.start(client, client="acme-corp", question="sky?")
+
+    call = client.calls[0]
+    assert call["call"].inputs == {"client": "acme-corp", "question": "sky?"}
+
+
 # --- .run: context-aware dispatch -------------------------------------------
 
 
