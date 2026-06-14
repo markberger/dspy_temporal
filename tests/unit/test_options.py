@@ -55,3 +55,16 @@ def test_retry_policy_non_retryable_is_a_copy():
     rp = o.retry_policy()
     rp.non_retryable_error_types.append("BarError")
     assert o.non_retryable_error_types == ["FooError"]  # source untouched
+
+
+def test_activity_kwargs_keys_and_default_heartbeat():
+    kw = CallOptions().activity_kwargs()
+    assert set(kw) == {"start_to_close_timeout", "heartbeat_timeout", "retry_policy"}
+    assert kw["start_to_close_timeout"] == timedelta(seconds=300)
+    assert kw["heartbeat_timeout"] is None  # default: equivalent to omitting it
+    assert kw["retry_policy"].maximum_attempts == 3
+
+
+def test_activity_kwargs_includes_heartbeat_when_set():
+    kw = CallOptions(heartbeat_timeout_seconds=5).activity_kwargs()
+    assert kw["heartbeat_timeout"] == timedelta(seconds=5)
