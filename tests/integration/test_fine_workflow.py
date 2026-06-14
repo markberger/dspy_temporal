@@ -67,6 +67,34 @@ class _TwoStage(dspy.Module):
         return await self.stage2.acall(topic=topic.topic)
 
 
+class _CompiledInner(dspy.Module):
+    """A sub-module marked ``_compiled`` (as an optimizer would), whose predictor
+    binds its own distinct LM. DSPy's ``named_predictors()`` skips compiled
+    sub-modules, so without ``all_named_predictors`` this predictor would be
+    invisible to fine mode -- never bound a ``WorkflowLM``, its real LM running
+    inside the workflow sandbox instead of a recorded ``dspy_lm_call`` activity."""
+
+    def __init__(self):
+        super().__init__()
+        self.qa = dspy.Predict("question -> answer")
+        self.qa.lm = _NamedDummyLM("model-compiled", [{"answer": "blue"}] * 5)
+        self._compiled = True
+
+    async def aforward(self, question):
+        return await self.qa.acall(question=question)
+
+
+class _OuterWithCompiled(dspy.Module):
+    """Wraps a compiled sub-module as its only predictor-bearing child."""
+
+    def __init__(self):
+        super().__init__()
+        self.inner = _CompiledInner()
+
+    async def aforward(self, question):
+        return await self.inner.acall(question=question)
+
+
 @pytest.mark.asyncio
 async def test_fine_chain_of_thought_end_to_end(dummy_lm):
     """A ChainOfThought run in fine mode: one LM call -> one activity.
@@ -133,6 +161,44 @@ async def test_fine_per_predictor_multi_lm(dummy_lm):
     # Both LMs were used, each in its own activity, attributed to its own model.
     assert "model-fast" in usage  # stage1 -> worker default
     assert "model-smart" in usage  # stage2 -> bound .lm
+
+
+@pytest.mark.asyncio
+async def test_fine_compiled_submodule_predictor_routes_through_activity():
+    """A predictor inside a *compiled* sub-module is still discovered in fine
+    mode: it gets a WorkflowLM bound to its own LM, so its call runs as a
+    dspy_lm_call activity (its model id appears in lm_usage) rather than the
+    real LM executing inside the workflow sandbox. Guards the all_named_predictors
+    fix end-to-end -- with plain named_predictors() this predictor is invisible."""
+    task_queue = f"tq-{uuid.uuid4().hex[:8]}"
+    dt.deploy(
+        _OuterWithCompiled,
+        name="compiled_inner",
+        config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
+    )
+    # A distinct worker default so we can prove the *bound* (compiled) LM ran,
+    # not the fallback.
+    dt.set_worker_lm(_NamedDummyLM("model-default", [{"answer": "red"}] * 5))
+
+    async with await WorkflowEnvironment.start_time_skipping(
+        data_converter=data_converter
+    ) as env:
+        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        async with worker:
+            pred = await dt.run_program(
+                env.client,
+                "compiled_inner",
+                {"question": "color of the sky?"},
+                task_queue=task_queue,
+                mode=dt.RunMode.FINE,
+            )
+
+    assert pred.answer == "blue"  # the compiled predictor's bound LM answered
+    usage = pred.get_lm_usage()
+    # The compiled predictor was routed to its own LM via its own activity...
+    assert "model-compiled" in usage
+    # ...and the worker default was never needed (no unbound predictor).
+    assert "model-default" not in usage
 
 
 @pytest.mark.asyncio

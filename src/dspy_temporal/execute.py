@@ -28,7 +28,7 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     import dspy
 
-    from .registry import default_registry
+    from .registry import all_named_predictors, default_registry
     from .serde import dict_to_prediction, normalize_inputs
 
 from .models import LMDescribeInput, LMSpecsOutput, ProgramCallInput, ProgramCallOutput
@@ -140,8 +140,11 @@ async def execute_fine(
 
     # Bind a per-predictor WorkflowLM so each predictor routes to *its own* LM
     # (honoring a bound `.lm`); the activity resolves lm_ref -> real LM.
+    # all_named_predictors (not named_predictors) so predictors inside a compiled
+    # sub-module also get a WorkflowLM -- otherwise their bound `.lm` would win and
+    # call the real LM inside the sandbox instead of the dspy_lm_call activity.
     default_spec = specs.specs[DEFAULT_LM_REF]
-    for predictor_name, predictor in program.named_predictors():
+    for predictor_name, predictor in all_named_predictors(program):
         predictor.lm = WorkflowLM(
             spec=specs.specs.get(predictor_name) or default_spec,
             lm_ref=predictor_name,

@@ -16,7 +16,7 @@ from temporalio import activity
 from ..config import get_tracing_callback, get_worker_lm, run_program_async_or_sync
 from ..heartbeat import heartbeating
 from ..models import ProgramCallInput, ProgramCallOutput
-from ..registry import default_registry
+from ..registry import all_named_predictors, default_registry
 from ..serde import prediction_to_dict
 
 _NO_WORKER_LM = (
@@ -40,7 +40,7 @@ def run_program_activity(call: ProgramCallInput) -> ProgramCallOutput:
     worker_lm = get_worker_lm()
     if worker_lm is not None:
         ctx_kwargs["lm"] = worker_lm
-    elif any(getattr(p, "lm", None) is None for _, p in program.named_predictors()):
+    elif any(getattr(p, "lm", None) is None for _, p in all_named_predictors(program)):
         raise RuntimeError(_NO_WORKER_LM)
     # Attach the tracing callback (if tracing is set up) so DSPy emits spans for
     # this run. Span emission lives here, inside the activity (never in workflow

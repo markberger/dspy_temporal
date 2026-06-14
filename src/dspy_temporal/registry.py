@@ -23,16 +23,53 @@ ModuleBuilder = Callable[[], dspy.Module]
 ModuleSource = ModuleBuilder | dspy.Module
 
 
+def all_named_predictors(module: dspy.Module) -> list[tuple[str, dspy.Predict]]:
+    """Like ``module.named_predictors()`` but also reaches predictors inside
+    *compiled* sub-modules.
+
+    DSPy's ``named_parameters()`` walk (which ``named_predictors()`` filters) skips
+    any sub-module whose ``_compiled`` flag is set -- the flag optimizers stamp on
+    a program once they've compiled it. That hides every predictor living inside a
+    compiled sub-module, so an LM bound there would survive ``_copy_stripped``
+    (leaking its API key into a built copy) and would never receive a per-predictor
+    ``WorkflowLM`` in fine mode (its real LM would then run inside the workflow
+    sandbox instead of a recorded activity). We temporarily clear ``_compiled`` on
+    every sub-module, take the normal walk -- so the returned names keep the bare
+    dotted convention the rest of the package keys ``lm_ref`` on (NOT the
+    ``self.``-prefixed names ``named_sub_modules`` yields) -- then restore the flags.
+
+    Pure-Python and I/O-free, so it stays safe to call from the fine workflow's
+    sandboxed build path. (DSPy 3.2.x: see the ``_compiled`` skip in
+    ``primitives/base_module.py:named_parameters`` and the ``skip_compiled=False``
+    default of ``named_sub_modules``, which lets us enumerate compiled descendants.)
+    """
+    compiled = [
+        sub
+        for _name, sub in module.named_sub_modules(type_=dspy.Module)
+        if getattr(sub, "_compiled", False)
+    ]
+    for sub in compiled:
+        sub._compiled = False
+    try:
+        return module.named_predictors()
+    finally:
+        for sub in compiled:
+            sub._compiled = True
+
+
 def _copy_stripped(module: dspy.Module) -> dspy.Module:
     """Return a fresh copy of ``module`` with every predictor's ``.lm`` dropped.
 
     ``deepcopy`` (not ``reset_copy``) so a compiled program's few-shot demos are
     preserved; nulling each predictor's ``.lm`` drops any bound live LM (and its
-    API keys) so the prototype's secrets never reach a built copy. Pure-Python and
-    I/O-free, so it is safe to call from the fine workflow's sandboxed build path.
+    API keys) so the prototype's secrets never reach a built copy. Uses
+    :func:`all_named_predictors` so predictors inside compiled sub-modules are
+    stripped too (else their bound LM, and its key, would survive the clone).
+    Pure-Python and I/O-free, so it is safe to call from the fine workflow's
+    sandboxed build path.
     """
     clone = module.deepcopy()
-    for _name, predictor in clone.named_predictors():
+    for _name, predictor in all_named_predictors(clone):
         predictor.lm = None
     return clone
 
