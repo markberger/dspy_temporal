@@ -13,7 +13,6 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 
 import dspy_temporal as dt
-from dspy_temporal.config import RunConfig
 from dspy_temporal.converter import data_converter
 
 
@@ -23,7 +22,7 @@ async def test_end_to_end_worker_with_plugin(dummy_lm):
     dt.deploy(
         lambda: dspy.ChainOfThought("question -> answer"),
         name="qa_plugin",
-        config=RunConfig(task_queue=task_queue),
+        task_queue=task_queue,
     )
     dt.set_worker_lm(dummy_lm)
 
@@ -55,7 +54,7 @@ async def test_plugin_on_client_installs_converter_and_propagates(dummy_lm):
     dt.deploy(
         lambda: dspy.ChainOfThought("question -> answer"),
         name="qa_propagate",
-        config=RunConfig(task_queue=task_queue),
+        task_queue=task_queue,
     )
     dt.set_worker_lm(dummy_lm)
 
@@ -88,14 +87,14 @@ async def test_plugin_replays_recorded_history(dummy_lm):
     dt.deploy(
         lambda: dspy.ChainOfThought("question -> answer"),
         name="qa_replay",
-        config=RunConfig(task_queue=task_queue),
+        task_queue=task_queue,
     )
     dt.set_worker_lm(dummy_lm)
 
     async with await WorkflowEnvironment.start_time_skipping(
         data_converter=data_converter
     ) as env:
-        worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
+        worker = dt.build_worker(env.client, task_queue=task_queue)
         async with worker:
             await dt.run_program(
                 env.client,

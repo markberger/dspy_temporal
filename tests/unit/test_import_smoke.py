@@ -28,7 +28,30 @@ def test_package_imports_with_plugin_surface():
     # If the plugin/converter/sandbox imports broke, `import dspy_temporal`
     # above would already have raised; touching the symbols documents intent.
     assert hasattr(dt, "DSPyPlugin")
-    assert hasattr(dt, "data_converter")
+    assert hasattr(dt, "connect")
+
+
+def test_strict_surface_keeps_internals_off_top_level():
+    """``dt.X`` exists iff X is in ``__all__``: internals are submodule-only.
+
+    The converter is the canary -- it used to be a top-level re-export; now it
+    lives only in ``dspy_temporal.converter`` (still importable from there).
+    """
+    assert not hasattr(dt, "data_converter")
+    from dspy_temporal.converter import data_converter  # noqa: F401
+
+    # Every advertised name resolves, and nothing outside ``__all__`` leaks.
+    for name in dt.__all__:
+        assert hasattr(dt, name), name
+    for internal in (
+        "RunConfig",
+        "execute_coarse",
+        "execute_fine",
+        "register_program",
+        "default_registry",
+        "DSPY_ACTIVITIES",
+    ):
+        assert not hasattr(dt, internal), internal
 
 
 def test_temporalio_runtime_meets_declared_floor():

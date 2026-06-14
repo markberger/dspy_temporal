@@ -17,14 +17,13 @@ from __future__ import annotations
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from .config import RunConfig
 from .plugin import DSPyPlugin
 
 
 def build_worker(
     client: Client,
     *,
-    config: RunConfig | None = None,
+    task_queue: str,
     max_concurrent_activities: int = 100,
     extra_passthrough_modules: tuple[str, ...] = (),
     extra_workflows: tuple = (),
@@ -49,7 +48,6 @@ def build_worker(
     The activities/workflows/runner/executor are all contributed by
     :class:`DSPyPlugin`, which this builds the ``Worker`` through.
     """
-    config = config or RunConfig()
     plugin = DSPyPlugin(
         extra_passthrough_modules=extra_passthrough_modules,
         max_concurrent_activities=max_concurrent_activities,
@@ -58,7 +56,7 @@ def build_worker(
     plugins = [*worker_kwargs.pop("plugins", ()), plugin]
     return Worker(
         client,
-        task_queue=config.task_queue,
+        task_queue=task_queue,
         plugins=plugins,
         **worker_kwargs,
     )

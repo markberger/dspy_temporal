@@ -12,7 +12,9 @@ from temporalio.testing import ActivityEnvironment
 import dspy_temporal as dt
 from dspy_temporal import config as config_mod
 from dspy_temporal.coarse.activities import run_program_activity
+from dspy_temporal.config import clear_worker_lm
 from dspy_temporal.models import ProgramCallInput, ProgramCallOutput
+from dspy_temporal.registry import register_program
 
 
 def test_run_program_activity_returns_prediction(qa_program):
@@ -62,7 +64,7 @@ def test_predictor_own_lm_wins_over_worker_lm():
         m.set_lm(DummyLM([{"reasoning": "r", "answer": "red"}] * 5))
         return m
 
-    dt.register_program("ownlm", build)
+    register_program("ownlm", build)
     dt.set_worker_lm(DummyLM([{"reasoning": "r", "answer": "blue"}] * 5))
 
     output = ActivityEnvironment().run(
@@ -109,8 +111,8 @@ def test_no_worker_lm_and_lm_needed_raises():
     Mirrors fine mode's actionable error (see fine/activities.py ``_NO_WORKER_LM``)
     instead of letting the program run and surface an opaque litellm error.
     """
-    dt.clear_worker_lm()
-    dt.register_program("qa", lambda: dspy.ChainOfThought("question -> answer"))
+    clear_worker_lm()
+    register_program("qa", lambda: dspy.ChainOfThought("question -> answer"))
     env = ActivityEnvironment()
     with pytest.raises(RuntimeError, match="no worker LM is configured"):
         env.run(
@@ -125,8 +127,8 @@ def test_no_worker_lm_and_no_usage():
     ``_StaticProgram`` implements only ``forward`` (no ``aforward``), so this also
     exercises the synchronous fallback in ``run_program_async_or_sync``.
     """
-    dt.clear_worker_lm()
-    dt.register_program("static", _StaticProgram)
+    clear_worker_lm()
+    register_program("static", _StaticProgram)
 
     output = ActivityEnvironment().run(
         run_program_activity,

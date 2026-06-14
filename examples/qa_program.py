@@ -20,5 +20,5 @@ def build_qa() -> dspy.Module:
 qa = dt.deploy(
     build_qa,
     name="qa",
-    config=dt.RunConfig(task_queue=TASK_QUEUE),
+    task_queue=TASK_QUEUE,
 )

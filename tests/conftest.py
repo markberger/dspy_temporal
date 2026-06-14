@@ -9,7 +9,7 @@ from dspy.utils.dummies import DummyLM
 
 import dspy_temporal as dt
 from dspy_temporal import config as config_mod
-from dspy_temporal.registry import ProgramRegistry
+from dspy_temporal.registry import ProgramRegistry, register_program
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +46,7 @@ def dummy_lm():
 @pytest.fixture
 def qa_program(dummy_lm):
     """Register a 'qa' program and set the worker LM to the dummy LM."""
-    dt.register_program("qa", lambda: dspy.ChainOfThought("question -> answer"))
+    register_program("qa", lambda: dspy.ChainOfThought("question -> answer"))
     dt.set_worker_lm(dummy_lm)
     return "qa"
 
@@ -131,7 +131,7 @@ def fine_react():
     """
     _REACT_CALLS.update(react=0, extract=0, tool=0)
     _REACT_STATE.update(extract_failed=False)
-    dt.register_program("weather_agent", _build_weather_react)
+    register_program("weather_agent", _build_weather_react)
     dt.set_worker_lm(ReActWorkerLM())
     return SimpleNamespace(
         name="weather_agent",

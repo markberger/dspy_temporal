@@ -19,7 +19,7 @@ import asyncio
 import os
 import sys
 
-from react_program import TASK_QUEUE
+from react_program import weather_agent
 
 import dspy_temporal as dt
 
@@ -38,13 +38,9 @@ async def main() -> None:
 
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     client = await dt.connect(address, interceptors=interceptors)
-    prediction = await dt.run_program(
-        client,
-        "weather_agent",
-        {"question": question},
-        task_queue=TASK_QUEUE,
-        mode=dt.RunMode.FINE,
-    )
+    # The handle was deployed with mode=FINE + its task_queue, so start it
+    # directly -- no need to re-pass either here.
+    prediction = await weather_agent.start(client, question=question)
     print("Q:", question)
     print("A:", prediction.answer)
 

@@ -19,7 +19,7 @@ import json
 import os
 import sys
 
-from two_lm_program import TASK_QUEUE
+from two_lm_program import two_lm_qa
 
 import dspy_temporal as dt
 
@@ -38,13 +38,9 @@ async def main() -> None:
 
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     client = await dt.connect(address, interceptors=interceptors)
-    prediction = await dt.run_program(
-        client,
-        "two_lm_qa",
-        {"question": question},
-        task_queue=TASK_QUEUE,
-        mode=dt.RunMode.FINE,
-    )
+    # The handle was deployed with mode=FINE + its task_queue, so start it
+    # directly -- no need to re-pass either here.
+    prediction = await two_lm_qa.start(client, question=question)
 
     print("Q:", question)
     print("A:", prediction.answer)

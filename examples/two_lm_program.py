@@ -52,5 +52,6 @@ class TwoLMQA(dspy.Module):
 two_lm_qa = dt.deploy(
     TwoLMQA,
     name="two_lm_qa",
-    config=dt.RunConfig(task_queue=TASK_QUEUE, mode=dt.RunMode.FINE),
+    task_queue=TASK_QUEUE,
+    mode=dt.RunMode.FINE,
 )

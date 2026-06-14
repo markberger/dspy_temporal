@@ -15,7 +15,7 @@ workflows — with retries, timeouts, and observability — without writing Temp
   activity, with the program's orchestration running in the workflow. Completed LM/tool
   calls are recorded in Temporal history, so long/agentic runs resume from the last
   completed step instead of re-calling the model, and each LM call gets an isolated span
-  (no token-attribution ambiguity under concurrency). Opt in with `RunConfig(mode=RunMode.FINE)`.
+  (no token-attribution ambiguity under concurrency). Opt in with `deploy(..., mode=RunMode.FINE)`.
   See [Fine-grained mode](#fine-grained-mode) for usage and limits.
 
 ## How it works
@@ -72,9 +72,13 @@ import dspy_temporal as dt
 qa = dt.deploy(
     lambda: dspy.ChainOfThought("question -> answer"),
     name="qa",
-    config=dt.RunConfig(task_queue="dspy-temporal"),
+    task_queue="dspy-temporal",
 )
 ```
+
+`task_queue` is required (there is no default) — naming it once, here, is what keeps the
+worker and the run on the same queue. The returned `qa` handle carries that queue (and the
+`mode`), so you never repeat it when starting a run.
 
 **2. Run a worker** (imports `program.py` so the builder is registered):
 
@@ -85,20 +89,26 @@ import program  # registers "qa"
 async def main():
     dt.configure_lm_from_env()           # reads DSPY_LM_MODEL + provider keys from env
     client = await dt.connect("localhost:7233")
-    worker = dt.build_worker(client, config=dt.RunConfig(task_queue="dspy-temporal"))
+    worker = dt.build_worker(client, task_queue="dspy-temporal")
     await worker.run()
 
 asyncio.run(main())
 ```
 
-**3. Start a run from anywhere:**
+**3. Start a run** (the `qa` handle from step 1 knows its own queue + mode):
 
 ```python
+from program import qa            # the handle returned by deploy
+
 client = await dt.connect("localhost:7233")
-pred = await dt.run_program(client, "qa", {"question": "Why is the sky blue?"},
-                            task_queue="dspy-temporal")
+pred = await qa.start(client, question="Why is the sky blue?")
 print(pred.answer)
 ```
+
+`qa.start(client, **inputs)` is the standalone start; when you don't have the handle in
+scope, `dt.run_program(client, "qa", {"question": ...}, task_queue="dspy-temporal")` is the
+lower-level by-name alternative. Tune retries/timeouts per run with `CallOptions`
+(`qa.start(client, question=..., options=dt.CallOptions(maximum_attempts=5))`).
 
 Set the LM via env on the worker:
 
@@ -111,8 +121,9 @@ A runnable example lives in `examples/` (`qa_program.py`, `worker.py`, `run.py`)
 
 ## More ways to deploy, run, and wire
 
-The `deploy` / `run_program` / `build_worker` trio above is the stable baseline. A few
-conveniences layer on top — each is optional, and nothing about the baseline changes.
+The `deploy` → `build_worker` → `agent.start` flow above is the common path. The handle
+returned by `deploy` also does more, and there are other ways to wire the worker — each
+optional.
 
 ### Deploy a live (or compiled) module instance
 
@@ -127,12 +138,12 @@ import dspy
 import dspy_temporal as dt
 
 program = dspy.ChainOfThought("question -> answer")   # or a compiled program carrying demos
-agent = dt.deploy(program, name="qa", mode=dt.RunMode.COARSE, task_queue="dspy-temporal")
+agent = dt.deploy(program, name="qa", task_queue="dspy-temporal", mode=dt.RunMode.COARSE)
 ```
 
-`deploy` also takes a builder (`dt.deploy(lambda: ..., name=...)`); pass an explicit
-`config=dt.RunConfig(...)` to override the `mode`/`task_queue` it otherwise assembles from the
-keywords. Runnable example: `examples/deploy_instance.py`.
+`deploy` also takes a builder (`dt.deploy(lambda: ..., name=..., task_queue=...)`); either
+way the handle carries the `task_queue` + `mode` you pass. Runnable example:
+`examples/deploy_instance.py`.
 
 ### Compose a deployed program inside your OWN workflow
 
@@ -152,7 +163,7 @@ from temporalio import workflow
 import dspy_temporal as dt
 
 agent = dt.deploy(lambda: dspy.ChainOfThought("question -> answer"),
-                  name="compose_qa", mode=dt.RunMode.COARSE, task_queue="dspy-temporal")
+                  name="compose_qa", task_queue="dspy-temporal", mode=dt.RunMode.COARSE)
 
 @workflow.defn
 class ResearchWorkflow:
@@ -165,9 +176,9 @@ class ResearchWorkflow:
 ```
 
 Register the user workflow on the worker with `build_worker(..., extra_workflows=[ResearchWorkflow])`
-(or the plugin below). To start a deployed program as a standalone workflow from a client, use
-`await dt.run_program(client, "compose_qa", {...})`. If you'd rather compose without a handle,
-`dt.execute_coarse` / `dt.execute_fine` are exported too. Runnable example:
+(or the plugin below). `agent.run()` is the one compose verb. To start the *deployed program*
+itself as a standalone workflow instead, use `await agent.start(client, ...)` (or the by-name
+`dt.run_program(client, "compose_qa", {...}, task_queue="dspy-temporal")`). Runnable example:
 `examples/compose_program.py` + `examples/run_compose.py`.
 
 ### Wire with a plugin (client + worker)
@@ -199,7 +210,8 @@ overwriting) anything you pass explicitly. Add your own composed workflows via
 `DSPyPlugin(extra_workflows=[ResearchWorkflow])` and extra sandbox-passthrough prefixes via
 `DSPyPlugin(extra_passthrough_modules=("my_pkg",))`. `build_worker` stays the one-call path (it
 builds its worker through this same plugin) and shares the exact same activity/workflow set
-(`dt.DSPY_ACTIVITIES` / `dt.DSPY_WORKFLOWS`). Runnable example: `examples/worker_plugin.py`.
+(exposed for advanced hand-wiring as `DSPY_ACTIVITIES` / `DSPY_WORKFLOWS` in
+`dspy_temporal.plugin`). Runnable example: `examples/worker_plugin.py`.
 
 ## Fine-grained mode
 
@@ -213,7 +225,7 @@ its own activity. The payoff:
 - **Per-call tracing:** each LM call runs on an isolated LM copy and emits its own span
   with correct `gen_ai.usage.*` tokens (the coarse shared-history attribution caveat is gone).
 
-Opt in per program with `RunConfig(mode=RunMode.FINE)`. Tools are ordinary Python functions you
+Opt in per program with `deploy(..., mode=RunMode.FINE)`. Tools are ordinary Python functions you
 hand to `dspy.ReAct` in the builder — there is no fine-mode-specific tool API:
 
 ```python
@@ -229,13 +241,14 @@ def build_agent() -> dspy.Module:
     return dspy.ReAct("question -> answer", tools=[get_weather])
 
 agent = dt.deploy(build_agent, name="weather_agent",
-                  config=dt.RunConfig(task_queue="dspy-temporal", mode=dt.RunMode.FINE))
+                  task_queue="dspy-temporal", mode=dt.RunMode.FINE)
 ```
 
 The same worker serves both modes (it registers both workflows and all activities), so no
-worker change is needed. Run it the usual way — `run_program(..., mode=RunMode.FINE)`. In the
-Temporal UI you'll see distinct `dspy_lm_call` / `dspy_tool_call` activities per run. A
-runnable example is in `examples/` (`react_program.py`, `run_react.py`).
+worker change is needed. Run it the usual way — `await agent.start(client, question=...)`; the
+handle already knows it's fine mode, so there's no `mode=` to re-pass. In the Temporal UI you'll
+see distinct `dspy_lm_call` / `dspy_tool_call` activities per run. A runnable example is in
+`examples/` (`react_program.py`, `run_react.py`).
 
 **Where each piece runs:** the tool *bodies* and the LM HTTP calls run in activities (real
 I/O allowed); the builder, the ReAct loop, and adapter format/parse run in the workflow as
@@ -280,7 +293,7 @@ from dspy_temporal.tracing import setup_tracing
 
 interceptor = setup_tracing(service_name="qa-worker")   # OTLP by default; reads OTEL_EXPORTER_OTLP_*
 client = await dt.connect("localhost:7233", interceptors=[interceptor])
-worker = dt.build_worker(client, config=dt.RunConfig(task_queue="dspy-temporal"))
+worker = dt.build_worker(client, task_queue="dspy-temporal")
 await worker.run()
 ```
 

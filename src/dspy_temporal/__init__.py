@@ -5,66 +5,41 @@ from __future__ import annotations
 __version__ = "0.1.0"
 
 from .client import run_program
-from .coarse.activities import run_program_activity
 from .coarse.api import TemporalProgram, deploy
-from .coarse.workflow import DSPyProgramWorkflow
 from .config import (
     CallOptions,
-    RunConfig,
     RunMode,
-    clear_worker_lm,
     configure_lm_from_env,
-    get_worker_lm,
     set_worker_lm,
 )
-from .converter import connect, data_converter
-from .execute import execute_coarse, execute_fine
-from .fine.activities import (
-    describe_lms_activity,
-    lm_call_activity,
-    tool_call_activity,
-)
-from .fine.workflow import DSPyProgramFineWorkflow
-from .models import (
-    LMCallInput,
-    LMCallOutput,
-    LMDescribeInput,
-    LMSpec,
-    LMSpecsOutput,
-    ProgramCallInput,
-    ProgramCallOutput,
-    ToolCallInput,
-    ToolCallOutput,
-)
-from .plugin import DSPY_ACTIVITIES, DSPY_WORKFLOWS, DSPyPlugin
-from .registry import ProgramRegistry, default_registry, register_program
+from .converter import connect
+from .plugin import DSPyPlugin
 from .worker import build_worker
 
-# ``__all__`` is the *headline* surface: the verbs a user needs for the common
-# path (deploy a program, run it, wire a worker, connect, pick a mode). Everything
-# imported above stays importable as ``dt.<name>`` -- the registry (``register_program``,
-# ``ProgramRegistry``, ``default_registry``), the wire models (``ProgramCallInput`` &
-# co.), the raw workflow/activity classes (``DSPY_ACTIVITIES`` / ``DSPY_WORKFLOWS``,
-# ``DSPyProgramWorkflow`` / ``run_program_activity`` / the fine-mode set), the
-# worker-LM setters (``set_worker_lm`` / ``get_worker_lm`` / ``clear_worker_lm``),
-# ``data_converter`` and ``CallOptions`` -- they are just kept out of the advertised
-# list to keep the core legible. (``__init__.py`` is F401-exempt so these re-exports
-# don't trip "imported but unused".)
+# Strict surface: ``dt.X`` exists **iff** ``X`` is documented in ``__all__``.
+# Everything else lives in its defining submodule and is imported from there:
+#   - wire models -> ``dspy_temporal.models``
+#   - raw workflow/activity classes, ``DSPY_ACTIVITIES`` / ``DSPY_WORKFLOWS`` ->
+#     ``dspy_temporal.plugin`` (and ``.coarse``/``.fine``)
+#   - the in-your-workflow compose seams ``execute_coarse`` / ``execute_fine`` ->
+#     ``dspy_temporal.execute`` (``agent.run()`` is the headline compose verb)
+#   - ``data_converter`` -> ``dspy_temporal.converter``
+#   - ``register_program`` / ``default_registry`` / ``ProgramRegistry`` ->
+#     ``dspy_temporal.registry``
+#   - ``get_worker_lm`` / ``clear_worker_lm`` -> ``dspy_temporal.config``
 __all__ = [  # noqa: RUF022 -- grouped by concern, not alphabetized
     "__version__",
     # deploy + run a program
-    "deploy",
-    "run_program",
-    "TemporalProgram",
-    # worker / client
-    "build_worker",
+    "deploy",  # deploy(source, *, name, task_queue, mode=COARSE)
+    "TemporalProgram",  # handle type returned by deploy (run / start)
+    "run_program",  # low-level by-name standalone start (task_queue required)
+    # worker / client wiring
+    "build_worker",  # build_worker(client, *, task_queue, ...)
     "DSPyPlugin",
     "connect",
-    "configure_lm_from_env",
-    # config
-    "RunConfig",
+    "configure_lm_from_env",  # LM from env (the documented LM setup)
+    "set_worker_lm",  # bring-your-own dspy.LM object (advanced LM setup)
+    # config / tuning
     "RunMode",
-    # compose a deployed program into your own workflow
-    "execute_coarse",
-    "execute_fine",
+    "CallOptions",  # retry/timeout tuning for a run
 ]
