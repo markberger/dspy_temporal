@@ -5,6 +5,9 @@ already-processed outputs + usage read from an *isolated* history, and the tool
 call runs the named tool (sync or async) and returns its observation.
 """
 
+import threading
+import time
+
 import dspy
 import pytest
 from dspy.utils.dummies import DummyLM
@@ -315,3 +318,75 @@ def test_evict_lm_map_entry_absent_name_is_noop():
     """Evicting a name with no cached map does not raise (pop with default)."""
     clear_lm_map_cache()
     _evict_lm_map_entry("never_cached")  # no KeyError
+
+
+def test_resolve_lm_concurrent_first_callers_build_once(monkeypatch):
+    """N threads racing the first resolve for a program build the map ONCE: the
+    per-name build lock serializes them, the double-check makes the late arrivals
+    reuse the first build, and every caller sees the same map (#8 deepcopy waste)."""
+    register_program(
+        "race", lambda: _TwoPredictor(bound_lm=DummyLM([{"answer": "BOUND"}] * 5))
+    )
+    dt.set_worker_lm(DummyLM([{"answer": "DEFAULT"}] * 5))
+    clear_lm_map_cache()
+
+    # A slow build so all threads pile up on the build lock before the first wins.
+    builds = {"n": 0}
+    real_build = default_registry().build
+    started = threading.Event()
+
+    def slow_build(name):
+        builds["n"] += 1
+        started.set()
+        time.sleep(0.05)  # widen the window for the other threads to queue
+        return real_build(name)
+
+    monkeypatch.setattr(default_registry(), "build", slow_build)
+
+    results: list = []
+    barrier = threading.Barrier(8)
+
+    def worker():
+        barrier.wait()  # release all threads together
+        results.append(_resolve_lm("race", "smart"))
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert builds["n"] == 1  # built exactly once despite 8 concurrent first-callers
+    # Every thread resolved the same (single) bound LM object from the shared map.
+    assert len(results) == 8
+    assert all(r is results[0] is not None for r in results)
+    assert fine_activities._LM_MAP_CACHE["race"]["smart"] is results[0]
+
+
+def test_resolve_lm_discards_stale_build_after_reregister(monkeypatch):
+    """If a re-registration bumps the generation *during* a build, that build is
+    returned to its caller but NOT installed in the cache -- so the stale map never
+    re-poisons the cache after eviction (#1 re-poisoning race)."""
+    register_program("stale", lambda: _TwoPredictor(bound_lm=DummyLM([{"a": "1"}])))
+    dt.set_worker_lm(DummyLM([{"answer": "D"}] * 5))
+    clear_lm_map_cache()
+
+    # Build hook that, mid-build, simulates a concurrent re-registration: evict the
+    # entry and bump the registry generation (exactly what the invalidation
+    # listener does on a real re-register), so the post-build generation check fails.
+    real_build = default_registry().build
+
+    def reregistering_build(name):
+        program = real_build(name)
+        # Genuine re-register bumps the generation + fires _evict_lm_map_entry.
+        unregister_program("stale")
+        register_program("stale", lambda: _TwoPredictor(bound_lm=DummyLM([{"a": "2"}])))
+        return program
+
+    monkeypatch.setattr(default_registry(), "build", reregistering_build)
+
+    lm = _resolve_lm("stale", "smart")
+    assert lm is not None  # this caller still got a usable map
+    # ...but the stale build was discarded: the cache holds no "stale" entry, so
+    # the next resolve rebuilds against the new generation.
+    assert "stale" not in fine_activities._LM_MAP_CACHE
