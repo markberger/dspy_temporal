@@ -1,22 +1,24 @@
-"""Worker construction: register both workflows + all activities.
+"""Worker construction: delegate the DSPy worker set to ``DSPyPlugin``.
 
-The fixed activity/workflow set lives in :mod:`dspy_temporal.plugin`
-(:data:`DSPY_ACTIVITIES` / :data:`DSPY_WORKFLOWS`) so ``build_worker`` and
-:class:`DSPyPlugin` share a single source of truth. ``build_worker`` wires the
-``Worker`` directly (it does *not* apply the plugin, to avoid double-application)
-but pulls the same constants.
+``build_worker`` constructs its ``Worker`` *through* :class:`DSPyPlugin`, so the
+plugin is the single source of truth for the activities, workflows, sandbox
+runner, and activity executor (the fixed set lives in
+:mod:`dspy_temporal.plugin` as :data:`DSPY_ACTIVITIES` / :data:`DSPY_WORKFLOWS`).
+
+It expects a plugin-free client (the usual ``dt.connect("localhost:7233")``
+flow). If the client already carries a ``DSPyPlugin`` (e.g.
+``dt.connect(..., plugins=[DSPyPlugin()])``), that plugin already propagates to
+the worker -- pass the client to a bare ``Worker`` in that case rather than
+``build_worker``, or Temporal will warn that the same plugin type is applied twice.
 """
 
 from __future__ import annotations
-
-from concurrent.futures import ThreadPoolExecutor
 
 from temporalio.client import Client
 from temporalio.worker import Worker
 
 from .config import RunConfig
-from .plugin import DSPY_ACTIVITIES, DSPY_WORKFLOWS
-from .sandbox import default_workflow_runner
+from .plugin import DSPyPlugin
 
 
 def build_worker(
@@ -43,16 +45,20 @@ def build_worker(
     ``extra_workflows`` registers additional ``@workflow.defn`` classes on the
     same worker -- e.g. a user-authored workflow that composes a deployed program
     via ``await agent.run(**inputs)`` (see ``TemporalProgram.run``).
+
+    The activities/workflows/runner/executor are all contributed by
+    :class:`DSPyPlugin`, which this builds the ``Worker`` through.
     """
     config = config or RunConfig()
-    worker_kwargs.setdefault(
-        "workflow_runner", default_workflow_runner(*extra_passthrough_modules)
+    plugin = DSPyPlugin(
+        extra_passthrough_modules=extra_passthrough_modules,
+        max_concurrent_activities=max_concurrent_activities,
+        extra_workflows=extra_workflows,
     )
+    plugins = [*worker_kwargs.pop("plugins", ()), plugin]
     return Worker(
         client,
         task_queue=config.task_queue,
-        workflows=[*DSPY_WORKFLOWS, *extra_workflows],
-        activities=list(DSPY_ACTIVITIES),
-        activity_executor=ThreadPoolExecutor(max_workers=max_concurrent_activities),
+        plugins=plugins,
         **worker_kwargs,
     )

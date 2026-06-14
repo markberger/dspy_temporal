@@ -75,6 +75,10 @@ select = [
 # Semantic-convention attribute-name constants (e.g. "llm.token_count.prompt").
 # Bandit reads the "TOKEN"-named constants as hardcoded secrets — false positive.
 "src/dspy_temporal/tracing/semconv.py" = ["S105"]
+# The package root is a re-export hub: it imports the full surface and advertises
+# only the headline subset via __all__. Advanced symbols stay importable as
+# dt.<name>, so don't flag them as "imported but unused".
+"src/dspy_temporal/__init__.py" = ["F401"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

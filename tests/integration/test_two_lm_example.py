@@ -75,9 +75,9 @@ async def test_two_lm_example_routes_each_predictor(two_lm_example):
         return program
 
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
-    handle = dt.deploy_module(
-        "two_lm_qa_offline",
+    dt.deploy(
         build_offline_two_lm,
+        name="two_lm_qa_offline",
         config=RunConfig(task_queue=task_queue, mode=dt.RunMode.FINE),
     )
     # The worker default backs the __default__ spec/fallback; named so it can't be
@@ -89,7 +89,13 @@ async def test_two_lm_example_routes_each_predictor(two_lm_example):
     ) as env:
         worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
         async with worker:
-            pred = await handle.start(env.client, {"question": "Why is the sky blue?"})
+            pred = await dt.run_program(
+                env.client,
+                "two_lm_qa_offline",
+                {"question": "Why is the sky blue?"},
+                task_queue=task_queue,
+                mode=dt.RunMode.FINE,
+            )
 
     assert pred.answer == "blue"
     usage = pred.get_lm_usage()

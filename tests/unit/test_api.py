@@ -1,8 +1,9 @@
-"""Tests for the auto-wrap API: deploy / deploy_module + the TemporalProgram handle.
+"""Tests for the auto-wrap API: deploy + the TemporalProgram handle, and the
+standalone run_program client helper.
 
-`.start` is covered against a fake client (records the call) so
-no Temporal server is needed; an end-to-end `.start()` lives in the integration
-suite. `.run`'s in-workflow dispatch is covered by monkeypatching the execute_*
+`run_program` is covered against a fake client (records the call) so no Temporal
+server is needed; an end-to-end `run_program` lives in the integration suite.
+`.run`'s in-workflow dispatch is covered by monkeypatching the execute_*
 coroutines; its outside-a-workflow degrade runs a real local DSPy call.
 """
 
@@ -31,25 +32,17 @@ class FakeClient:
         return ProgramCallOutput(prediction={"answer": "blue"})
 
 
-# --- deploy_module ----------------------------------------------------------
+# --- deploy ------------------------------------------------------------------
 
 
-def test_deploy_module_registers_and_returns_handle():
-    handle = dt.deploy_module("qa2", lambda: dspy.Predict("q -> a"))
+def test_deploy_builder_registers_and_returns_handle():
+    handle = dt.deploy(lambda: dspy.Predict("q -> a"), name="qa2")
     assert isinstance(handle, TemporalProgram)
     assert handle.name == "qa2"
     assert "qa2" in dt.default_registry()
-    # Default config when none supplied.
+    # defaults: coarse + the default task queue.
+    assert handle.config.mode == RunMode.COARSE
     assert handle.config.task_queue == "dspy-temporal"
-
-
-def test_deploy_module_uses_given_config():
-    cfg = RunConfig(task_queue="tq-custom")
-    handle = dt.deploy_module("qa3", lambda: dspy.Predict("q -> a"), config=cfg)
-    assert handle.config is cfg
-
-
-# --- deploy ------------------------------------------------------------------
 
 
 def test_deploy_with_instance_registers_and_returns_handle():
@@ -69,14 +62,6 @@ def test_deploy_with_instance_registers_and_returns_handle():
     assert all(p.lm is None for _n, p in built.named_predictors())
 
 
-def test_deploy_builder_path():
-    handle = dt.deploy(lambda: dspy.Predict("q -> a"), name="bld")
-    assert isinstance(handle, TemporalProgram)
-    # defaults: coarse + the default task queue.
-    assert handle.config.mode == RunMode.COARSE
-    assert handle.config.task_queue == "dspy-temporal"
-
-
 def test_deploy_supplied_config_takes_precedence():
     cfg = RunConfig(task_queue="tq-explicit", mode=RunMode.FINE)
     # mode/task_queue kwargs are ignored in favor of the supplied config.
@@ -90,36 +75,33 @@ def test_deploy_supplied_config_takes_precedence():
     assert handle.config is cfg
 
 
-# --- .start (standalone path) ------------------------------------------------
+# --- run_program (standalone path) -------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_start_generates_default_workflow_id():
-    handle = TemporalProgram(name="qa", config=RunConfig(task_queue="tq"))
+async def test_run_program_generates_default_workflow_id():
     client = FakeClient()
 
-    pred = await handle.start(client, {"question": "sky?"})
+    pred = await dt.run_program(client, "qa", {"question": "sky?"}, task_queue="tq")
 
     assert pred.answer == "blue"
     call = client.calls[0]
     assert re.fullmatch(r"dspy-qa-[0-9a-f]{12}", call["id"])
     assert call["task_queue"] == "tq"
     assert isinstance(call["call"], ProgramCallInput)
-    # options default to the config's call_options
-    assert call["call"].options == RunConfig().call_options
 
 
 @pytest.mark.asyncio
-async def test_start_honors_overrides():
-    handle = TemporalProgram(name="qa", config=RunConfig(task_queue="tq"))
+async def test_run_program_honors_overrides():
     client = FakeClient()
     opts = CallOptions(maximum_attempts=9)
 
-    await handle.start(
+    await dt.run_program(
         client,
+        "qa",
         {"question": "sky?"},
-        workflow_id="wf-explicit",
         task_queue="tq-override",
+        workflow_id="wf-explicit",
         options=opts,
     )
 
@@ -130,14 +112,11 @@ async def test_start_honors_overrides():
 
 
 @pytest.mark.asyncio
-async def test_start_selects_fine_workflow_for_fine_mode():
+async def test_run_program_selects_fine_workflow_for_fine_mode():
     from dspy_temporal.fine.workflow import DSPyProgramFineWorkflow
 
-    handle = TemporalProgram(
-        name="qa", config=RunConfig(task_queue="tq", mode=RunMode.FINE)
-    )
     client = FakeClient()
-    await handle.start(client, {"question": "sky?"})
+    await dt.run_program(client, "qa", {"question": "sky?"}, mode=RunMode.FINE)
     assert client.calls[0]["run"] == DSPyProgramFineWorkflow.run
 
 
@@ -164,7 +143,8 @@ async def test_run_in_workflow_coarse_dispatches_execute_coarse(monkeypatch):
     assert pred.answer == "from_coarse"
     assert recorded["name"] == "qa"
     assert recorded["inputs"] == {"question": "sky?"}
-    assert recorded["options"] == handle.config.call_options
+    # The context-aware path carries no per-handle options.
+    assert recorded["options"] is None
 
 
 @pytest.mark.asyncio
@@ -189,9 +169,7 @@ async def test_run_in_workflow_fine_dispatches_execute_fine(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_outside_workflow_coarse_runs_in_process(monkeypatch, dummy_lm):
     monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: False)
-    dt.deploy_module(
-        "degrade_coarse", lambda: dspy.ChainOfThought("question -> answer")
-    )
+    dt.deploy(lambda: dspy.ChainOfThought("question -> answer"), name="degrade_coarse")
 
     handle = TemporalProgram(
         name="degrade_coarse", config=RunConfig(mode=RunMode.COARSE)
@@ -204,7 +182,7 @@ async def test_run_outside_workflow_coarse_runs_in_process(monkeypatch, dummy_lm
 @pytest.mark.asyncio
 async def test_run_outside_workflow_fine_runs_in_process(monkeypatch, dummy_lm):
     monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: False)
-    dt.deploy_module("degrade_fine", lambda: dspy.ChainOfThought("question -> answer"))
+    dt.deploy(lambda: dspy.ChainOfThought("question -> answer"), name="degrade_fine")
 
     handle = TemporalProgram(name="degrade_fine", config=RunConfig(mode=RunMode.FINE))
     with dspy.context(lm=dummy_lm):

@@ -1,17 +1,26 @@
-"""``DSPyPlugin`` -- wire the DSPy activity + workflow set into any Temporal Worker.
+"""``DSPyPlugin`` -- a combined client + worker Temporal plugin for DSPy.
 
-An alternative to :func:`build_worker` for callers who already construct their own
-``Worker`` and want to add DSPy support declaratively::
+Pass it to the **client** -- ``dt.connect(..., plugins=[DSPyPlugin()])`` or
+``Client.connect(..., plugins=[DSPyPlugin()])`` -- and it does two things at once:
+it installs the pydantic data converter (so our pydantic input/output models
+round-trip with type fidelity) and, because it is *also* a
+``temporalio.worker.Plugin``, it auto-propagates to any ``Worker`` built from that
+client, contributing the four DSPy activities, the two generic workflows, and the
+passthrough sandbox runner. It configures a ``Replayer`` the same way::
 
-    Worker(client, task_queue="dspy-temporal", plugins=[dt.DSPyPlugin()])
+    client = await dt.connect("localhost:7233", plugins=[dt.DSPyPlugin()])
+    worker = Worker(client, task_queue="dspy-temporal")  # DSPy set auto-added
 
-The plugin contributes the same four activities, the two generic workflows, and
-the DSPy sandbox runner that ``build_worker`` wires by hand -- sharing the
-:data:`DSPY_ACTIVITIES` / :data:`DSPY_WORKFLOWS` constants so there is a single
-source of truth for the set.
+Apply it on the client **or** directly on a ``Worker`` / ``Replayer`` -- not both:
+the framework runs a client plugin that is also a worker plugin on the worker too,
+so passing it in both places double-applies it (the identity dedup below tolerates
+the fixed set, but extra workflows could duplicate). :func:`build_worker`
+constructs its ``Worker`` *through* this plugin, so the plugin is the single source
+of truth for the worker set; :data:`DSPY_ACTIVITIES` / :data:`DSPY_WORKFLOWS` stay
+exported for advanced hand-wiring.
 
 Merge semantics (important): ``Worker.__init__`` folds explicit kwargs into the
-config *before* running plugins, so this ``configure_worker`` **extends** any
+config *before* running plugins, so ``configure_worker`` **extends** any
 caller-passed ``activities`` / ``workflows`` rather than overwriting them, and
 dedups by identity to tolerate accidental double-application. The framework also
 pre-populates ``workflow_runner`` with its default ``SandboxedWorkflowRunner`` (so
@@ -19,6 +28,8 @@ pre-populates ``workflow_runner`` with its default ``SandboxedWorkflowRunner`` (
 passthrough sandbox, we replace any ``SandboxedWorkflowRunner`` with the DSPy one
 (use ``extra_passthrough_modules`` to add your own prefixes), while leaving a
 deliberately different runner type (e.g. ``UnsandboxedWorkflowRunner``) untouched.
+The data converter is only filled in when the config still carries the framework
+default, so a caller's customized converter is respected.
 """
 
 from __future__ import annotations
@@ -26,11 +37,15 @@ from __future__ import annotations
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 
-from temporalio.worker import Plugin, WorkerConfig
+import temporalio.client
+import temporalio.service
+import temporalio.worker
+from temporalio.converter import DataConverter
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from .coarse.activities import run_program_activity
 from .coarse.workflow import DSPyProgramWorkflow
+from .converter import data_converter
 from .fine.activities import describe_lms_activity, lm_call_activity, tool_call_activity
 from .fine.workflow import DSPyProgramFineWorkflow
 from .sandbox import default_workflow_runner
@@ -56,43 +71,77 @@ def _dedup_by_identity(items: Iterable) -> list:
     return out
 
 
-class DSPyPlugin(Plugin):
-    """A ``temporalio.worker.Plugin`` that contributes the DSPy worker set.
+class DSPyPlugin(temporalio.client.Plugin, temporalio.worker.Plugin):
+    """A combined client + worker plugin that contributes the DSPy set.
 
-    ``agent`` is accepted for parity with the competitor's
-    ``DSPyPlugin(agent, ...)`` call but is advisory: programs register via import
-    side effects into the process-global registry (``deploy`` / ``deploy_module``
-    / ``register_program``), so the plugin wires the fixed activity + workflow set
-    regardless of whether a handle is passed.
+    Subclasses both ``temporalio.client.Plugin`` and ``temporalio.worker.Plugin``;
+    programs register via import side effects into the process-global registry
+    (``deploy`` / ``register_program``), so the plugin wires the fixed activity +
+    workflow set regardless of which programs are deployed.
     """
 
     def __init__(
         self,
-        agent=None,
         *,
         extra_passthrough_modules: tuple[str, ...] = (),
         max_concurrent_activities: int = 100,
         extra_workflows: tuple = (),
     ):
-        self._agent = agent
         self._extra_passthrough_modules = tuple(extra_passthrough_modules)
         self._max_concurrent_activities = max_concurrent_activities
         self._extra_workflows = tuple(extra_workflows)
 
-    def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
-        config["activities"] = _dedup_by_identity(
-            [*(config.get("activities") or []), *DSPY_ACTIVITIES]
+    # --- shared wiring (used by both worker and replayer) --------------------
+
+    def _merged_workflows(self, existing) -> list:
+        return _dedup_by_identity(
+            [*(existing or []), *DSPY_WORKFLOWS, *self._extra_workflows]
         )
-        config["workflows"] = _dedup_by_identity(
-            [*(config.get("workflows") or []), *DSPY_WORKFLOWS, *self._extra_workflows]
-        )
+
+    def _dspy_runner_or_existing(self, runner):
         # The DSPy workflows require our passthrough sandbox. The framework
         # default runner does not pass dspy/litellm/registry through, so replace
         # any SandboxedWorkflowRunner with ours; respect a different runner type.
-        if isinstance(config.get("workflow_runner"), SandboxedWorkflowRunner):
-            config["workflow_runner"] = default_workflow_runner(
-                *self._extra_passthrough_modules
-            )
+        if isinstance(runner, SandboxedWorkflowRunner):
+            return default_workflow_runner(*self._extra_passthrough_modules)
+        return runner
+
+    def _converter_or_existing(self, existing):
+        # Fill in the pydantic converter only when the config still carries the
+        # framework default (or none); never clobber a caller's custom converter.
+        if existing is None or existing is DataConverter.default:
+            return data_converter
+        return existing
+
+    # --- client side ---------------------------------------------------------
+
+    def configure_client(
+        self, config: temporalio.client.ClientConfig
+    ) -> temporalio.client.ClientConfig:
+        config["data_converter"] = self._converter_or_existing(
+            config.get("data_converter")
+        )
+        return config
+
+    async def connect_service_client(
+        self,
+        config: temporalio.service.ConnectConfig,
+        next,
+    ) -> temporalio.service.ServiceClient:
+        return await next(config)
+
+    # --- worker side ---------------------------------------------------------
+
+    def configure_worker(
+        self, config: temporalio.worker.WorkerConfig
+    ) -> temporalio.worker.WorkerConfig:
+        config["activities"] = _dedup_by_identity(
+            [*(config.get("activities") or []), *DSPY_ACTIVITIES]
+        )
+        config["workflows"] = self._merged_workflows(config.get("workflows"))
+        config["workflow_runner"] = self._dspy_runner_or_existing(
+            config.get("workflow_runner")
+        )
         # Back the synchronous activities with a thread pool, unless the caller
         # already provided an executor (default is None).
         if config.get("activity_executor") is None:
@@ -104,7 +153,18 @@ class DSPyPlugin(Plugin):
     async def run_worker(self, worker, next):
         return await next(worker)
 
-    def configure_replayer(self, config):
+    # --- replayer ------------------------------------------------------------
+
+    def configure_replayer(
+        self, config: temporalio.worker.ReplayerConfig
+    ) -> temporalio.worker.ReplayerConfig:
+        config["workflows"] = self._merged_workflows(config.get("workflows"))
+        config["workflow_runner"] = self._dspy_runner_or_existing(
+            config.get("workflow_runner")
+        )
+        config["data_converter"] = self._converter_or_existing(
+            config.get("data_converter")
+        )
         return config
 
     def run_replayer(self, replayer, histories, next):

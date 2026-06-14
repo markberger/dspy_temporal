@@ -1,18 +1,22 @@
-"""Tests for DSPyPlugin.configure_worker merge semantics + the abstract hooks.
+"""Tests for DSPyPlugin: client + worker + replayer configuration.
 
-The key risk is the single-source-of-truth / non-clobber guard: because
-``Worker.__init__`` folds explicit kwargs into the config *before* running
-plugins, ``configure_worker`` must EXTEND caller-passed activities/workflows (not
-overwrite them) and must replace the framework-default sandbox runner with the
-DSPy one (``setdefault`` would silently no-op since the key is always present).
+The key risk on the worker side is the single-source-of-truth / non-clobber
+guard: because ``Worker.__init__`` folds explicit kwargs into the config *before*
+running plugins, ``configure_worker`` must EXTEND caller-passed
+activities/workflows (not overwrite them) and must replace the framework-default
+sandbox runner with the DSPy one (``setdefault`` would silently no-op since the
+key is always present). The client/replayer hooks must install the pydantic data
+converter while respecting a caller-customized one.
 """
 
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from temporalio.converter import DataConverter
 from temporalio.worker import UnsandboxedWorkflowRunner
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
+from dspy_temporal.converter import data_converter
 from dspy_temporal.plugin import DSPY_ACTIVITIES, DSPY_WORKFLOWS, DSPyPlugin
 
 
@@ -28,7 +32,8 @@ def _default_config():
 
 
 def test_plugin_instantiable():
-    # Plugin is a 4-method ABC; omitting any method makes it uninstantiable.
+    # Combined client+worker ABC (6 abstract hooks); omitting any makes it
+    # uninstantiable. Instantiating proves we implement all of them.
     assert isinstance(DSPyPlugin(), DSPyPlugin)
 
 
@@ -97,6 +102,48 @@ def test_configure_worker_passes_extra_passthrough_modules():
     assert "my_pkg" in str(out["workflow_runner"])
 
 
+def test_configure_client_sets_pydantic_converter_when_default():
+    plugin = DSPyPlugin()
+    out = plugin.configure_client({"data_converter": DataConverter.default})
+    assert out["data_converter"] is data_converter
+
+
+def test_configure_client_respects_custom_converter():
+    plugin = DSPyPlugin()
+    custom = object()  # any non-default converter is left untouched
+    out = plugin.configure_client({"data_converter": custom})
+    assert out["data_converter"] is custom
+
+
+@pytest.mark.asyncio
+async def test_connect_service_client_is_passthrough():
+    plugin = DSPyPlugin()
+    seen = {}
+
+    async def fake_next(config):
+        seen["config"] = config
+        return "service-client"
+
+    result = await plugin.connect_service_client("the-config", fake_next)
+    assert result == "service-client"
+    assert seen["config"] == "the-config"
+
+
+def test_configure_replayer_adds_workflows_runner_and_converter():
+    plugin = DSPyPlugin()
+    out = plugin.configure_replayer(
+        {
+            "workflows": [],
+            "workflow_runner": SandboxedWorkflowRunner(),
+            "data_converter": DataConverter.default,
+        }
+    )
+    assert out["workflows"] == list(DSPY_WORKFLOWS)
+    assert isinstance(out["workflow_runner"], SandboxedWorkflowRunner)
+    assert "dspy" in str(out["workflow_runner"])
+    assert out["data_converter"] is data_converter
+
+
 @pytest.mark.asyncio
 async def test_plugin_run_worker_is_passthrough():
     plugin = DSPyPlugin()
@@ -111,13 +158,8 @@ async def test_plugin_run_worker_is_passthrough():
     assert seen["worker"] == "the-worker"
 
 
-def test_plugin_replayer_hooks_are_passthrough():
+def test_plugin_run_replayer_is_passthrough():
     plugin = DSPyPlugin()
-    cfg = {"some": "config"}
-    # configure_replayer returns the config unchanged.
-    assert plugin.configure_replayer(cfg) is cfg
-
-    # run_replayer forwards to next(replayer, histories) unchanged.
     seen = {}
 
     def fake_next(replayer, histories):
@@ -127,10 +169,3 @@ def test_plugin_replayer_hooks_are_passthrough():
     result = plugin.run_replayer("replayer", "histories", fake_next)
     assert result == "replayed"
     assert seen["args"] == ("replayer", "histories")
-
-
-def test_plugin_agent_arg_is_advisory():
-    # An agent handle may be passed for parity; it does not change wiring.
-    plugin = DSPyPlugin(agent=object())
-    out = plugin.configure_worker(_default_config())
-    assert out["workflows"] == list(DSPY_WORKFLOWS)

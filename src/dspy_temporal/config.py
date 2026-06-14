@@ -7,7 +7,7 @@ here) so the workflow can import it without dragging in dspy.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import dspy
 
@@ -35,7 +35,6 @@ class RunConfig:
     """
 
     task_queue: str = "dspy-temporal"
-    call_options: CallOptions = field(default_factory=CallOptions)
     mode: RunMode = RunMode.COARSE
 
 
