@@ -106,8 +106,10 @@ async def test_plugin_replays_recorded_history(dummy_lm):
             )
         history = await env.client.get_workflow_handle(workflow_id).fetch_history()
 
-    # workflows=[] is the empty seed the plugin extends with DSPY_WORKFLOWS; the
-    # plugin also supplies the sandbox runner and pydantic converter. A decode or
-    # sandbox failure would raise here.
+    # workflows=[] is the empty seed the plugin extends with DSPY_WORKFLOWS, and
+    # the plugin also supplies the passthrough sandbox runner the DSPy workflows
+    # require -- without either, replay_workflow raises. (The pydantic converter
+    # is also installed here, but isn't load-bearing for this history; its
+    # replayer wiring is asserted directly in test_plugin.py.)
     replayer = Replayer(workflows=[], plugins=[dt.DSPyPlugin()])
     await replayer.replay_workflow(history)
