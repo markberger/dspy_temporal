@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# wt — manage git worktrees for parallel Claude/dev sessions.
+#
+# Each worktree is an independent checkout under .worktrees/<name> that shares
+# this repo's single .git. Editing + `uv run pytest` + ruff are collision-free
+# across worktrees; only the live `docker compose` stack must run in one at a
+# time (it binds fixed host ports). See CLAUDE.md for the full rules.
+#
+# Usage:
+#   scripts/wt new <name> [base]                        create worktree+branch, venv, .env symlink
+#   scripts/wt list                                     list worktrees
+#   scripts/wt rm  <name> [--delete-branch] [--force]   remove a worktree
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+usage() {
+  cat <<'EOF'
+wt — manage git worktrees for parallel sessions (.worktrees/<name>)
+
+Usage:
+  scripts/wt new <name> [base]                        create worktree+branch, build venv, symlink .env
+  scripts/wt list                                     list worktrees
+  scripts/wt rm  <name> [--delete-branch] [--force]   remove a worktree
+
+Notes:
+  - base defaults to origin/main (falls back to main).
+  - Each worktree gets its own .venv via `uv sync --extra dev`.
+  - .env is symlinked from the main checkout, so one key rotation covers all.
+  - pre-commit is shared: run `uv run pre-commit install` ONCE in the MAIN checkout.
+EOF
+}
+
+cmd_new() {
+  local name="${1:-}" base="${2:-}"
+  [ -n "$name" ] || { echo "wt new: missing <name>" >&2; usage; exit 1; }
+  local wt="$ROOT/.worktrees/$name"
+  [ -e "$wt" ] && { echo "wt new: $wt already exists" >&2; exit 1; }
+  mkdir -p "$ROOT/.worktrees"
+
+  if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$name"; then
+    echo "Branch '$name' exists — checking it out into a worktree."
+    git -C "$ROOT" worktree add "$wt" "$name"
+  else
+    if [ -z "$base" ]; then
+      if git -C "$ROOT" show-ref --verify --quiet refs/remotes/origin/main; then
+        base="origin/main"
+      else
+        base="main"
+      fi
+    fi
+    git -C "$ROOT" worktree add "$wt" -b "$name" "$base"
+  fi
+
+  # Share the gitignored .env (real OPENROUTER_API_KEY) via a relative symlink
+  # so it survives the repo being moved. ../../.env resolves to the repo root.
+  if [ -f "$ROOT/.env" ]; then
+    ln -s ../../.env "$wt/.env"
+    echo "Linked .env -> ../../.env"
+  else
+    echo "WARNING: no $ROOT/.env — run 'cp .env.example .env' in the main checkout first." >&2
+  fi
+
+  # --all-extras = dev + tracing, so the full test suite (incl. tracing tests)
+  # runs. Pin the interpreter to the repo's .python-version so a fresh worktree
+  # doesn't drift to a newer Python than the main venv / CI (passed explicitly
+  # so it holds even before .python-version is committed into the branch).
+  local pyver=""
+  [ -f "$ROOT/.python-version" ] && pyver="$(cat "$ROOT/.python-version")"
+  echo "Building venv (uv sync --all-extras${pyver:+ --python $pyver})…"
+  if [ -n "$pyver" ]; then
+    ( cd "$wt" && uv sync --all-extras --python "$pyver" )
+  else
+    ( cd "$wt" && uv sync --all-extras )
+  fi
+
+  cat <<EOF
+
+Ready. Start a session with:
+  cd .worktrees/$name
+(pre-commit hooks are already shared from the main checkout.)
+EOF
+}
+
+cmd_list() {
+  git -C "$ROOT" worktree list
+}
+
+cmd_rm() {
+  local name="" force="" del=""
+  for a in "$@"; do
+    case "$a" in
+      --force) force="--force" ;;
+      --delete-branch) del=1 ;;
+      -*) echo "wt rm: unknown flag $a" >&2; exit 1 ;;
+      *) name="$a" ;;
+    esac
+  done
+  [ -n "$name" ] || { echo "wt rm: missing <name>" >&2; usage; exit 1; }
+  git -C "$ROOT" worktree remove $force "$ROOT/.worktrees/$name"
+  echo "Removed worktree .worktrees/$name"
+  if [ -n "$del" ]; then
+    git -C "$ROOT" branch -D "$name"   # git prints its own "Deleted branch" line
+  fi
+}
+
+case "${1:-}" in
+  new)  shift; cmd_new "$@" ;;
+  list) shift; cmd_list "$@" ;;
+  rm)   shift; cmd_rm "$@" ;;
+  -h|--help|"") usage ;;
+  *) echo "wt: unknown command '$1'" >&2; usage; exit 1 ;;
+esac

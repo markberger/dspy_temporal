@@ -33,6 +33,9 @@ packages = ["src/dspy_temporal"]
 [tool.ruff]
 # 88 is also Ruff's default; stated explicitly to match the existing style.
 line-length = 88
+# Parallel-session worktrees are nested checkouts; never lint them from the main
+# tree (also gitignored, which Ruff respects — this is belt-and-suspenders).
+extend-exclude = [".worktrees"]
 
 [tool.ruff.format]
 # Double quotes are the project standard (also Ruff's default).
