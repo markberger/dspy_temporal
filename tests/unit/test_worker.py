@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import dspy_temporal as dt
 from dspy_temporal import worker as worker_mod
 from dspy_temporal.config import RunConfig
+from dspy_temporal.plugin import DSPY_ACTIVITIES, DSPY_WORKFLOWS
 
 
 def test_build_worker_does_not_register_interceptors(monkeypatch):
@@ -62,3 +63,38 @@ def test_build_worker_respects_caller_workflow_runner(monkeypatch):
         object(), config=RunConfig(task_queue="tq"), workflow_runner=sentinel
     )
     assert captured["workflow_runner"] is sentinel
+
+
+def test_build_worker_workflows_come_from_shared_constant(monkeypatch):
+    """build_worker registers exactly the shared DSPY_WORKFLOWS + DSPY_ACTIVITIES
+    constants (single source of truth with the plugin), no inline literals."""
+    captured = {}
+
+    class FakeWorker:
+        def __init__(self, client, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(worker_mod, "Worker", FakeWorker)
+    dt.build_worker(object(), config=RunConfig(task_queue="tq"))
+
+    assert captured["workflows"] == list(DSPY_WORKFLOWS)
+    assert captured["activities"] == list(DSPY_ACTIVITIES)
+
+
+def test_build_worker_includes_extra_workflows(monkeypatch):
+    """A caller's own @workflow.defn classes are appended after the DSPy ones."""
+    captured = {}
+
+    class FakeWorker:
+        def __init__(self, client, **kwargs):
+            captured.update(kwargs)
+
+    class UserWorkflow:
+        pass
+
+    monkeypatch.setattr(worker_mod, "Worker", FakeWorker)
+    dt.build_worker(
+        object(), config=RunConfig(task_queue="tq"), extra_workflows=[UserWorkflow]
+    )
+
+    assert captured["workflows"] == [*DSPY_WORKFLOWS, UserWorkflow]

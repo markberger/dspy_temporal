@@ -87,7 +87,7 @@ async def test_fine_chain_of_thought_end_to_end(dummy_lm):
     ) as env:
         worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
         async with worker:
-            pred = await handle.execute(env.client, {"question": "color of the sky?"})
+            pred = await handle.start(env.client, {"question": "color of the sky?"})
 
     assert pred.answer == "blue"
     assert pred.reasoning
@@ -114,7 +114,7 @@ async def test_fine_per_predictor_multi_lm(dummy_lm):
     ) as env:
         worker = dt.build_worker(env.client, config=RunConfig(task_queue=task_queue))
         async with worker:
-            pred = await handle.execute(env.client, {"question": "weather in Tokyo?"})
+            pred = await handle.start(env.client, {"question": "weather in Tokyo?"})
 
     assert pred.answer == "sunny"
     usage = pred.get_lm_usage()
@@ -150,9 +150,7 @@ async def test_fine_json_adapter_structured_output():
                 env.client, config=RunConfig(task_queue=task_queue)
             )
             async with worker:
-                pred = await handle.execute(
-                    env.client, {"question": "color of the sky?"}
-                )
+                pred = await handle.start(env.client, {"question": "color of the sky?"})
     finally:
         dspy.configure(adapter=saved_adapter)
 

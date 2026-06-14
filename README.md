@@ -76,6 +76,87 @@ export OPENAI_API_KEY=sk-...
 
 A runnable example lives in `examples/` (`qa_program.py`, `worker.py`, `run.py`).
 
+## More ways to deploy, run, and wire
+
+The `deploy_module` / `run_program` / `build_worker` trio above is the stable baseline. Three
+additive conveniences layer on top — each is optional, and nothing about the baseline changes.
+
+### Deploy a live (or compiled) module instance
+
+`deploy_module` takes a zero-arg builder; **`deploy` also accepts a live `dspy.Module`
+instance** — handy for a program you've optimized with a DSPy teleprompter, whose predictors
+carry few-shot demos. The instance stays in worker memory as a prototype; each run gets a
+fresh, LM-stripped `deepcopy` (demos preserved, no bound LM or API key ever serialized into
+Temporal history):
+
+```python
+import dspy
+import dspy_temporal as dt
+
+program = dspy.ChainOfThought("question -> answer")   # or a compiled program carrying demos
+agent = dt.deploy(program, name="qa", mode=dt.RunMode.COARSE, task_queue="dspy-temporal")
+```
+
+`deploy` also takes a builder (`dt.deploy(lambda: ..., name=...)`); pass an explicit
+`config=dt.RunConfig(...)` to override the `mode`/`task_queue` it otherwise assembles from the
+keywords. Runnable example: `examples/deploy_instance.py`.
+
+### Compose a deployed program inside your OWN workflow
+
+The handle returned by `deploy`/`deploy_module` has a **context-aware** `await
+agent.run(**inputs)`:
+
+- **inside a user-authored `@workflow.defn`** it dispatches our activities inline, so you can
+  interleave DSPy calls with your own workflow logic (timers, other activities, child
+  workflows) as one durable, replayable execution;
+- **outside any workflow** it degrades to a plain local DSPy call (against your configured
+  `dspy.settings` LM).
+
+```python
+from datetime import timedelta
+import dspy
+from temporalio import workflow
+import dspy_temporal as dt
+
+agent = dt.deploy(lambda: dspy.ChainOfThought("question -> answer"),
+                  name="compose_qa", mode=dt.RunMode.COARSE, task_queue="dspy-temporal")
+
+@workflow.defn
+class ResearchWorkflow:
+    @workflow.run
+    async def run(self, question: str) -> str:
+        first = await agent.run(question=question)          # one durable activity step
+        await workflow.sleep(timedelta(seconds=1))          # ...interleave your own logic...
+        followup = await agent.run(question=f"Summarize in one word: {first.answer}")
+        return followup.answer
+```
+
+Register the user workflow on the worker with `build_worker(..., extra_workflows=[ResearchWorkflow])`
+(or the plugin below). The standalone path is unchanged: `await agent.start(client, {...})`
+starts our generic program workflow on a client, exactly like
+`run_program`. If you'd rather compose without a handle, `dt.execute_coarse` /
+`dt.execute_fine` are exported too. Runnable example: `examples/compose_program.py` +
+`examples/run_compose.py`.
+
+### Wire a worker with a plugin
+
+If you already construct your own `temporalio.worker.Worker` (custom interceptors, tuning, your
+own workflows/activities), add DSPy support with `DSPyPlugin` instead of `build_worker`:
+
+```python
+from temporalio.worker import Worker
+import dspy_temporal as dt
+
+worker = Worker(client, task_queue="dspy-temporal", plugins=[dt.DSPyPlugin()])
+```
+
+The plugin contributes the same four activities, both generic workflows, and the DSPy sandbox
+runner — **extending** (never overwriting) anything you pass explicitly. Add your own composed
+workflows via `DSPyPlugin(extra_workflows=[ResearchWorkflow])` and extra sandbox-passthrough
+prefixes via `DSPyPlugin(extra_passthrough_modules=("my_pkg",))`. `build_worker` stays the
+one-call path and shares the exact same activity/workflow set (`dt.DSPY_ACTIVITIES` /
+`dt.DSPY_WORKFLOWS`). Runnable example: `examples/worker_plugin.py`.
+
 ## Fine-grained mode
 
 Coarse mode runs the whole program in one activity. **Fine mode** instead runs the
@@ -109,7 +190,7 @@ agent = dt.deploy_module("weather_agent", build_agent,
 
 The same worker serves both modes (it registers both workflows and all activities), so no
 worker change is needed. Run it the usual way — `run_program(..., mode=RunMode.FINE)` or
-`agent.execute(client, {...})`. In the Temporal UI you'll see distinct `dspy_lm_call` /
+`agent.start(client, {...})`. In the Temporal UI you'll see distinct `dspy_lm_call` /
 `dspy_tool_call` activities per run. A runnable example is in `examples/`
 (`react_program.py`, `run_react.py`).
 
