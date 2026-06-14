@@ -4,6 +4,12 @@ Guidance for Claude Code (and humans) working in this repo.
 
 ## Parallel sessions via git worktrees
 
+**Worktrees are the default for any branch work — including a single session.**
+Start with `scripts/wt new <name>` and work inside `.worktrees/<name>`; don't
+`git checkout -b` in the main checkout. Switching the main checkout's branch
+moves it off whatever branch you (or another session) left it on and drags
+untracked files along — the main checkout should stay a stable, untouched anchor.
+
 Run several sessions at once, each on its own branch, with `scripts/wt`:
 
 ```bash
