@@ -19,6 +19,12 @@ from ..models import ProgramCallInput, ProgramCallOutput
 from ..registry import default_registry
 from ..serde import prediction_to_dict
 
+_NO_WORKER_LM = (
+    "This program has predictors with no LM and no worker LM is configured. "
+    "Call dspy_temporal.configure_lm_from_env() (or set_worker_lm(...)) at "
+    "worker startup."
+)
+
 
 @activity.defn(name="dspy_run_program")
 def run_program_activity(call: ProgramCallInput) -> ProgramCallOutput:
@@ -27,11 +33,15 @@ def run_program_activity(call: ProgramCallInput) -> ProgramCallOutput:
 
     # Apply the worker LM (and usage tracking) as a thread-local override so the
     # program's predictors that don't carry their own LM use it. A predictor's
-    # own .lm still takes precedence (see Predict._forward_preprocess).
+    # own .lm still takes precedence (see Predict._forward_preprocess). If there
+    # is no worker LM *and* a predictor would run without any LM, fail fast with
+    # an actionable message instead of an opaque litellm error.
     ctx_kwargs = {"track_usage": True}
     worker_lm = get_worker_lm()
     if worker_lm is not None:
         ctx_kwargs["lm"] = worker_lm
+    elif any(getattr(p, "lm", None) is None for _, p in program.named_predictors()):
+        raise RuntimeError(_NO_WORKER_LM)
     # Attach the tracing callback (if tracing is set up) so DSPy emits spans for
     # this run. Span emission lives here, inside the activity (never in workflow
     # code), so it is replay-safe by construction.

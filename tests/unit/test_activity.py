@@ -103,6 +103,22 @@ class _StaticProgram(dspy.Module):
         return dspy.Prediction(answer="static")
 
 
+def test_no_worker_lm_and_lm_needed_raises():
+    """Coarse mode fails fast when a predictor needs an LM but none is configured.
+
+    Mirrors fine mode's actionable error (see fine/activities.py ``_NO_WORKER_LM``)
+    instead of letting the program run and surface an opaque litellm error.
+    """
+    dt.clear_worker_lm()
+    dt.register_program("qa", lambda: dspy.ChainOfThought("question -> answer"))
+    env = ActivityEnvironment()
+    with pytest.raises(RuntimeError, match="no worker LM is configured"):
+        env.run(
+            run_program_activity,
+            ProgramCallInput(program="qa", inputs={"question": "?"}),
+        )
+
+
 def test_no_worker_lm_and_no_usage():
     """Covers the no-worker-LM branch and the lm_usage -> None path.
 
