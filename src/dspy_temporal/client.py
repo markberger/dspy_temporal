@@ -37,7 +37,8 @@ async def run_program(
     and is the *primary* path (the handle carries mode + queue so they can't
     desync). ``task_queue`` is required (no default).
 
-    The run ``mode`` is **resolved from the registry**, not blindly trusted:
+    The run ``mode`` is **resolved from the registry** (see
+    :meth:`ProgramRegistry.resolve_mode`), not blindly trusted:
 
     - If ``name`` was deployed in this process with a mode, that mode is used. A
       conflicting explicit ``mode`` raises (use ``handle.start`` to avoid the
@@ -48,34 +49,7 @@ async def run_program(
       imported the program module), an explicit ``mode`` is required as the
       escape hatch (none -> raises, since the mode would be ambiguous).
     """
-    reg = default_registry()
-    if name in reg:
-        registered = reg.mode_for(name)
-        if registered is None:  # registered locally but no mode (register_program)
-            if mode is None:
-                raise ValueError(
-                    f"Program {name!r} is registered without a run mode and no mode "
-                    f"was given. Pass mode=RunMode.COARSE/FINE, or deploy() it with a "
-                    f"mode."
-                )
-            resolved = mode
-        else:
-            if mode is not None and mode != registered:
-                raise ValueError(
-                    f"Program {name!r} is registered as mode={registered.value!r} but "
-                    f"run_program was called with mode={mode.value!r}. Use "
-                    f"handle.start() (the can't-desync path), or pass the matching "
-                    f"mode / omit it."
-                )
-            resolved = registered
-    else:  # not registered in this process
-        if mode is None:
-            raise ValueError(
-                f"Program {name!r} is not registered in this process and no mode was "
-                f"given -> ambiguous. Import the program module here, or pass "
-                f"mode=RunMode.COARSE/FINE (thin-client escape hatch)."
-            )
-        resolved = mode
+    resolved = default_registry().resolve_mode(name, mode)
 
     call = ProgramCallInput(
         program=name,

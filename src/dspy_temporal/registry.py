@@ -15,6 +15,7 @@ reach a built copy or the Temporal boundary.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import dspy
 
@@ -80,6 +81,26 @@ def _copy_stripped(module: dspy.Module) -> dspy.Module:
     return clone
 
 
+@dataclass(frozen=True)
+class _Entry:
+    """One program's registration record: its builder plus the metadata the
+    registry needs to enforce conflict semantics and resolve a run mode.
+
+    - ``builder``: the zero-arg callable that mints a fresh module on ``build()``.
+      A prototype instance is normalized into a clone-on-build closure at
+      registration time, so an ``_Entry`` only ever holds a builder.
+    - ``source``: the *original* object the name was registered with. Conflict
+      detection compares by identity: re-registering the **same** object is a
+      no-op; a **different** object under a taken name raises.
+    - ``mode``: the :class:`RunMode` the name was registered with (via ``deploy``
+      / ``register_program(..., mode=...)``), or None if registered without one.
+    """
+
+    builder: ModuleBuilder
+    source: ModuleSource
+    mode: RunMode | None
+
+
 class ProgramRegistry:
     """A name -> builder mapping owned by the worker process.
 
@@ -87,31 +108,58 @@ class ProgramRegistry:
     builder closure that clones it (LM-stripped) on each ``build()``, so the rest
     of the registry only ever deals with builders.
 
-    Alongside the builder map the registry keeps two parallel maps and a hook:
+    Each name maps to a single :class:`_Entry` holding ``(builder, source, mode)``:
 
-    - ``_sources``: the *original* object each name was registered with, used to
+    - ``source`` is the *original* object the name was registered with, used to
       enforce conflict semantics. Re-registering the **same object** under a name
       is a no-op (a worker that re-imports a module shouldn't error); registering
       a **different object** under an already-taken name raises -- callers must
       :meth:`unregister` first to replace deliberately.
-    - ``_modes``: the :class:`RunMode` a name was registered with (via ``deploy``
-      / ``register_program(..., mode=...)``), or absent if registered without one.
+    - ``mode`` is the :class:`RunMode` a name was registered with (via ``deploy``
+      / ``register_program(..., mode=...)``), or None if registered without one.
       :meth:`mode_for` reads it so the client can resolve a run mode from the
       registry instead of trusting a possibly-mismatched explicit argument.
+
+    Two pieces of process infrastructure sit alongside the entry map:
+
     - ``_listeners``: invalidation callbacks fired with a program *name* after each
-      genuine (re-)registration. The fine-mode LM-map cache subscribes here to
-      evict a stale entry when a name is re-registered. Kept generic and
-      dspy-free so the registry never imports its subscribers.
+      genuine (re-)registration *or* unregistration. The fine-mode LM-map cache
+      subscribes here to evict a stale entry. Kept generic and dspy-free so the
+      registry never imports its subscribers.
+    - ``_generations``: a per-name counter bumped on every invalidation. A cache
+      can stamp the generation it built against and discard a stale build if a
+      concurrent re-registration has since bumped it (see the fine-mode cache).
     """
 
     def __init__(self) -> None:
-        self._builders: dict[str, ModuleBuilder] = {}
-        # name -> original registered object, for conflict detection (#30).
-        self._sources: dict[str, ModuleSource] = {}
-        # name -> registered run mode, or absent if registered without one (#29).
-        self._modes: dict[str, RunMode] = {}
-        # Invalidation callbacks, fired with a name on each (re-)registration (#28).
+        # name -> _Entry(builder, source, mode). One record per name (#30, #29).
+        self._entries: dict[str, _Entry] = {}
+        # Invalidation callbacks, fired with a name on each (re-)registration AND
+        # unregistration (#28).
         self._listeners: list[Callable[[str], None]] = []
+        # Per-name registration generation, bumped on each invalidation. Lets a
+        # cache detect that the entry it built against has since been replaced.
+        self._generations: dict[str, int] = {}
+
+    def _invalidate(self, name: str) -> None:
+        """Mark ``name`` invalidated: bump its generation and fire the listeners.
+
+        Routed through by both :meth:`register` (on a genuine first/replace
+        registration) and :meth:`unregister` (only when the name was present), so
+        the generation counter and listener fires stay precise -- never on the
+        same-object re-register no-op or an unknown-name unregister.
+        """
+        self._generations[name] = self._generations.get(name, 0) + 1
+        for cb in self._listeners:
+            cb(name)
+
+    def generation(self, name: str) -> int:
+        """The current registration generation for ``name`` (0 if never seen).
+
+        Bumped on every (re-)registration/unregistration of the name. A cache
+        captures this before a slow build and re-checks it under its lock, so a
+        build raced by a concurrent re-registration is discarded as stale."""
+        return self._generations.get(name, 0)
 
     def register(
         self, name: str, source: ModuleSource, *, mode: RunMode | None = None
@@ -130,13 +178,14 @@ class ProgramRegistry:
         """
         # Conflict check first, before any normalization/mutation, so a same-object
         # re-import returns untouched and a different-object collision can't half-
-        # write the builder map.
-        if name in self._sources:
-            if self._sources[name] is source:
+        # write the entry map.
+        existing = self._entries.get(name)
+        if existing is not None:
+            if existing.source is source:
                 return  # same object re-imported (worker reload): no-op
             raise ValueError(
                 f"Program {name!r} is already registered to a different object. "
-                f"Registered: {sorted(self._sources)}. To replace it deliberately, "
+                f"Registered: {sorted(self._entries)}. To replace it deliberately, "
                 f"call unregister({name!r}) first, then register the new program."
             )
 
@@ -145,10 +194,8 @@ class ProgramRegistry:
 
             def builder(_proto: dspy.Module = prototype) -> dspy.Module:
                 return _copy_stripped(_proto)
-
-            self._builders[name] = builder
         elif callable(source):
-            self._builders[name] = source
+            builder = source
         else:
             raise TypeError(
                 f"Program {name!r} source must be a zero-arg callable returning a "
@@ -156,44 +203,85 @@ class ProgramRegistry:
                 f"{type(source).__name__}."
             )
 
-        # Record source + mode only after the builder is stored, so a bad-source
-        # TypeError above leaves _sources/_modes untouched (a later valid register
-        # of the same name then succeeds). The listener fire is last, so it runs
-        # exactly on a genuine first/replace registration -- never on the same-
-        # object no-op above (which already returned).
-        self._sources[name] = source
-        if mode is not None:
-            self._modes[name] = mode
-        for cb in self._listeners:
-            cb(name)
+        # Construct + store the _Entry only after source validation succeeds, so a
+        # bad-source TypeError above leaves the entry map untouched (a later valid
+        # register of the same name then succeeds). The invalidation fires last, so
+        # it runs exactly on a genuine first/replace registration -- never on the
+        # same-object no-op above (which already returned).
+        self._entries[name] = _Entry(builder=builder, source=source, mode=mode)
+        self._invalidate(name)
 
     def unregister(self, name: str) -> None:
-        """Remove a program by name. Unknown name is a silent no-op."""
-        self._builders.pop(name, None)
-        self._sources.pop(name, None)
-        self._modes.pop(name, None)
+        """Remove a program by name. Unknown name is a silent no-op.
+
+        A genuine removal fires the invalidation (bumping the generation and
+        listeners) so a cache evicts the stale entry; an unknown name does not, so
+        listener-fired counts stay precise."""
+        if self._entries.pop(name, None) is not None:
+            self._invalidate(name)
 
     def mode_for(self, name: str) -> RunMode | None:
         """The registered run mode for ``name``, or None if registered without one
         (e.g. via the low-level register_program) or not registered at all."""
-        return self._modes.get(name)
+        entry = self._entries.get(name)
+        return entry.mode if entry is not None else None
+
+    def resolve_mode(self, name: str, explicit: RunMode | None) -> RunMode:
+        """Resolve the run mode for a by-name run, validating ``explicit`` against
+        the registry. The client's :func:`run_program` delegates here.
+
+        - If ``name`` was deployed in this process with a mode, that mode wins; a
+          conflicting ``explicit`` raises (use ``handle.start`` to avoid it).
+        - If ``name`` was registered *without* a mode (low-level
+          ``register_program``), ``explicit`` is required (none -> raises).
+        - If ``name`` is not registered in this process (a thin client that never
+          imported the program module), ``explicit`` is required (none -> raises).
+        """
+        entry = self._entries.get(name)
+        if entry is not None:
+            registered = entry.mode
+            if registered is None:  # registered locally but no mode (register_program)
+                if explicit is None:
+                    raise ValueError(
+                        f"Program {name!r} is registered without a run mode and no "
+                        f"mode was given. Pass mode=RunMode.COARSE/FINE, or deploy() "
+                        f"it with a mode."
+                    )
+                return explicit
+            if explicit is not None and explicit != registered:
+                raise ValueError(
+                    f"Program {name!r} is registered as mode={registered.value!r} but "
+                    f"run_program was called with mode={explicit.value!r}. Use "
+                    f"handle.start() (the can't-desync path), or pass the matching "
+                    f"mode / omit it."
+                )
+            return registered
+        # Not registered in this process.
+        if explicit is None:
+            raise ValueError(
+                f"Program {name!r} is not registered in this process and no mode was "
+                f"given -> ambiguous. Import the program module here, or pass "
+                f"mode=RunMode.COARSE/FINE (thin-client escape hatch)."
+            )
+        return explicit
 
     def add_invalidation_listener(self, cb: Callable[[str], None]) -> None:
         """Register a callback fired with a program *name* after each successful
-        (re-)registration. Generic and dspy-free: the registry never imports the
-        subscriber (keeps the fine -> registry layering one-directional)."""
+        (re-)registration or unregistration. Generic and dspy-free: the registry
+        never imports the subscriber (keeps the fine -> registry layering
+        one-directional)."""
         self._listeners.append(cb)
 
     def build(self, name: str) -> dspy.Module:
         try:
-            builder = self._builders[name]
+            entry = self._entries[name]
         except KeyError:
             raise KeyError(
                 f"No program registered under {name!r}. Registered: "
-                f"{sorted(self._builders)}. Did the worker import the module that "
+                f"{sorted(self._entries)}. Did the worker import the module that "
                 f"calls deploy()/register_program()?"
             ) from None
-        module = builder()
+        module = entry.builder()
         if not isinstance(module, dspy.Module):
             raise TypeError(
                 f"Builder for {name!r} returned {type(module).__name__}, expected a "
@@ -202,10 +290,25 @@ class ProgramRegistry:
         return module
 
     def names(self) -> list[str]:
-        return sorted(self._builders)
+        return sorted(self._entries)
 
     def __contains__(self, name: object) -> bool:
-        return name in self._builders
+        return name in self._entries
+
+    def snapshot(self) -> dict[str, _Entry]:
+        """A shallow copy of the entry map, for save/restore around a test.
+
+        Entries are immutable (frozen :class:`_Entry`), so a shallow dict copy is a
+        faithful snapshot. The generation map and ``_listeners`` are NOT captured:
+        both are process infrastructure that must persist across a restore (the
+        cache's eviction hook subscribed once at import; generations only ever
+        advance, never roll back)."""
+        return dict(self._entries)
+
+    def restore(self, snap: dict[str, _Entry]) -> None:
+        """Replace the entry map with a snapshot taken by :meth:`snapshot`."""
+        self._entries.clear()
+        self._entries.update(snap)
 
 
 # Process-global default registry. deploy()/register_program() populate

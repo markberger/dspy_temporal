@@ -288,14 +288,15 @@ def test_add_invalidation_listener_fires_on_register(fresh_registry):
 
 
 def test_invalidation_listener_fires_again_after_unregister_register(fresh_registry):
-    """A genuine replace (unregister then register a new object) fires the listener
-    a second time -- this is the eviction trigger the fine cache relies on."""
+    """A genuine replace fires the listener on EACH step: the register, the
+    unregister (now also an invalidation), and the re-register -- every one of
+    which the fine cache must observe to drop the program's stale LM map."""
     fired = []
     fresh_registry.add_invalidation_listener(fired.append)
     fresh_registry.register("a", lambda: dspy.Predict("q -> a"))
     fresh_registry.unregister("a")
     fresh_registry.register("a", lambda: dspy.ChainOfThought("q -> a"))
-    assert fired == ["a", "a"]
+    assert fired == ["a", "a", "a"]
 
 
 def test_invalidation_listener_not_fired_on_same_object_noop(fresh_registry):
@@ -310,3 +311,92 @@ def test_invalidation_listener_not_fired_on_same_object_noop(fresh_registry):
     fresh_registry.register("a", builder)
     fresh_registry.register("a", builder)  # same object -> no-op, no fire
     assert fired == ["a"]
+
+
+def test_unregister_fires_invalidation_listener(fresh_registry):
+    """Unregistering a present name fires the listener (and bumps the generation),
+    so a cache evicts the entry that's now gone -- not only re-registration does."""
+    fired = []
+    fresh_registry.add_invalidation_listener(fired.append)
+    fresh_registry.register("a", lambda: dspy.Predict("q -> a"))
+    gen_after_register = fresh_registry.generation("a")
+    fresh_registry.unregister("a")
+    assert fired == ["a", "a"]  # once on register, once on unregister
+    assert fresh_registry.generation("a") == gen_after_register + 1
+
+
+def test_unregister_unknown_name_does_not_fire(fresh_registry):
+    """Unregistering a name that was never registered fires nothing and leaves the
+    generation untouched, so listener-fired counts stay precise."""
+    fired = []
+    fresh_registry.add_invalidation_listener(fired.append)
+    fresh_registry.unregister("never_here")
+    assert fired == []
+    assert fresh_registry.generation("never_here") == 0
+
+
+# --- snapshot / restore -------------------------------------------------------
+
+
+def test_snapshot_restore_roundtrip(fresh_registry):
+    """snapshot() then restore() rolls the entry map (builders, sources, AND modes)
+    back to the captured state -- the primitive the autouse fixture relies on."""
+    fresh_registry.register(
+        "keep", lambda: dspy.Predict("q -> a"), mode=dt.RunMode.FINE
+    )
+    snap = fresh_registry.snapshot()
+
+    # Mutate after the snapshot: add a name, drop the original, replace its mode.
+    fresh_registry.register("added", lambda: dspy.Predict("q -> a"))
+    fresh_registry.unregister("keep")
+    assert "added" in fresh_registry
+    assert "keep" not in fresh_registry
+
+    fresh_registry.restore(snap)
+    # The added name is gone, the dropped name is back, and its mode is restored.
+    assert fresh_registry.names() == ["keep"]
+    assert "added" not in fresh_registry
+    assert fresh_registry.mode_for("keep") == dt.RunMode.FINE
+    assert isinstance(fresh_registry.build("keep"), dspy.Module)
+
+
+# --- resolve_mode: the by-name run-mode resolution ladder ---------------------
+# The client's run_program delegates here; test every branch + exact raise text.
+
+
+def test_resolve_mode_registered_with_mode_omitted_returns_registered(fresh_registry):
+    fresh_registry.register("m", lambda: dspy.Predict("q -> a"), mode=dt.RunMode.FINE)
+    assert fresh_registry.resolve_mode("m", None) == dt.RunMode.FINE
+
+
+def test_resolve_mode_registered_with_mode_explicit_equal_ok(fresh_registry):
+    fresh_registry.register("m", lambda: dspy.Predict("q -> a"), mode=dt.RunMode.COARSE)
+    assert fresh_registry.resolve_mode("m", dt.RunMode.COARSE) == dt.RunMode.COARSE
+
+
+def test_resolve_mode_registered_with_mode_explicit_conflict_raises(fresh_registry):
+    fresh_registry.register("m", lambda: dspy.Predict("q -> a"), mode=dt.RunMode.COARSE)
+    with pytest.raises(
+        ValueError, match=r"registered as mode='coarse'.*mode='fine'.*handle\.start"
+    ):
+        fresh_registry.resolve_mode("m", dt.RunMode.FINE)
+
+
+def test_resolve_mode_registered_without_mode_omitted_raises(fresh_registry):
+    fresh_registry.register("m", lambda: dspy.Predict("q -> a"))  # no mode
+    with pytest.raises(ValueError, match=r"registered without a run mode"):
+        fresh_registry.resolve_mode("m", None)
+
+
+def test_resolve_mode_registered_without_mode_explicit_is_returned(fresh_registry):
+    fresh_registry.register("m", lambda: dspy.Predict("q -> a"))  # no mode
+    assert fresh_registry.resolve_mode("m", dt.RunMode.FINE) == dt.RunMode.FINE
+
+
+def test_resolve_mode_unregistered_omitted_raises(fresh_registry):
+    with pytest.raises(ValueError, match=r"not registered in this process"):
+        fresh_registry.resolve_mode("absent", None)
+
+
+def test_resolve_mode_unregistered_explicit_is_returned(fresh_registry):
+    assert fresh_registry.resolve_mode("absent", dt.RunMode.COARSE) == dt.RunMode.COARSE
