@@ -592,7 +592,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15" },
-    { name = "temporalio", specifier = ">=1.7" },
+    { name = "temporalio", specifier = ">=1.16" },
 ]
 provides-extras = ["dev", "tracing"]
 

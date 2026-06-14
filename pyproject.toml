@@ -6,7 +6,11 @@ readme = "README.md"
 requires-python = ">=3.10,<3.15"
 dependencies = [
     "dspy~=3.2.1",
-    "temporalio>=1.7",
+    # 1.16 is the first release with the current worker/client Plugin interface
+    # (PR #1011 added the configure_replayer/run_replayer hooks DSPyPlugin
+    # implements); the pydantic data converter landed in 1.10. Below 1.16,
+    # `import dspy_temporal` fails on the plugin import. See tests/unit/test_import_smoke.py.
+    "temporalio>=1.16",
     "pydantic>=2.7",
 ]
 

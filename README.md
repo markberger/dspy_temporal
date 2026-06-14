@@ -27,9 +27,24 @@ workflows — with retries, timeouts, and observability — without writing Temp
 
 ## Install
 
+`dspy-temporal` isn't on PyPI yet — install it from the Git repo:
+
 ```bash
-uv sync --all-extras   # dev + tracing; the full test suite needs both
+pip install "git+https://github.com/markberger/dspy_temporal"
 ```
+
+For LLM tracing (OpenTelemetry), add the `tracing` extra:
+
+```bash
+pip install "dspy-temporal[tracing] @ git+https://github.com/markberger/dspy_temporal"
+```
+
+> Once published, `pip install dspy-temporal` (and `dspy-temporal[tracing]`) will
+> be the install line; the Git URL above is the interim path.
+
+The snippets below are plain Python — run them with `python your_script.py`. The
+`uv run …` form you'll see further down is for working **inside a clone** of this
+repo; see [Development](#development) for that contributor flow.
 
 ## Parallel work (git worktrees)
 
@@ -256,7 +271,7 @@ conventions (Langfuse, Grafana/Tempo, Honeycomb, Datadog) and **OpenInference**
 returned interceptor to the **client** (the worker inherits it):
 
 ```bash
-uv sync --extra tracing
+pip install "dspy-temporal[tracing] @ git+https://github.com/markberger/dspy_temporal"
 ```
 
 ```python
@@ -321,7 +336,24 @@ from its environment; it enables tracing automatically when an OTLP endpoint is 
 The Temporal dev server uses an in-memory store, so workflow history resets when the
 stack restarts.
 
-## Formatting
+## Development
+
+Contributing? Clone the repo and install everything (dev + tracing — the full
+test suite needs both):
+
+```bash
+git clone https://github.com/markberger/dspy_temporal
+cd dspy_temporal
+uv sync --all-extras
+```
+
+The repo uses [`uv`](https://docs.astral.sh/uv/), so contributor commands run
+through `uv run …` (e.g. `uv run pytest`). Formatting and test commands are below.
+To run several sessions at once, each on its own branch, see
+[Parallel work (git worktrees)](#parallel-work-git-worktrees) and
+[CLAUDE.md](CLAUDE.md).
+
+### Formatting
 
 Code is formatted and imports sorted with [Ruff](https://docs.astral.sh/ruff/),
 configured in `pyproject.toml` (`[tool.ruff]`). After `uv sync --all-extras`, enable the
@@ -342,7 +374,7 @@ uv run pre-commit run --all-files        # both hooks over the whole repo
 In editors, the [Ruff extension](https://docs.astral.sh/ruff/editors/) gives
 format-on-save with the same config.
 
-## Tests
+### Tests
 
 ```bash
 uv run pytest                                   # run the suite
