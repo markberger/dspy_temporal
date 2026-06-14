@@ -4,7 +4,13 @@ import dspy
 import pytest
 from dspy.utils.dummies import DummyLM
 
-from dspy_temporal.registry import all_named_predictors
+import dspy_temporal as dt
+from dspy_temporal.registry import (
+    all_named_predictors,
+    default_registry,
+    register_program,
+    unregister_program,
+)
 
 
 class _Inner(dspy.Module):
@@ -147,3 +153,160 @@ def test_register_strips_lm_inside_compiled_submodule(fresh_registry):
     assert prototype.mid.inner._compiled is True
     assert prototype.mid.inner.qa.lm is not None
     assert prototype.top.lm is not None
+
+
+# --- #30: conflict semantics + unregister ------------------------------------
+
+
+def test_register_same_object_twice_is_noop(fresh_registry):
+    """Re-registering the SAME object under a name is a no-op (no raise), e.g. a
+    worker re-importing a module that registers at import time."""
+
+    def builder():
+        return dspy.Predict("q -> a")
+
+    fresh_registry.register("x", builder)
+    fresh_registry.register("x", builder)  # same object -> silently ignored
+    assert fresh_registry.names() == ["x"]
+
+
+def test_register_conflicting_object_raises(fresh_registry):
+    """A DIFFERENT object under an already-taken name raises, and the message
+    points at unregister() and lists the registered names."""
+    fresh_registry.register("x", lambda: dspy.Predict("q -> a"))
+    with pytest.raises(ValueError, match=r"already registered.*unregister"):
+        fresh_registry.register("x", lambda: dspy.Predict("q -> a"))
+
+
+def test_conflict_message_lists_multiple_registered_names(fresh_registry):
+    """The conflict error enumerates every currently-registered name (sorted)."""
+    fresh_registry.register("a", lambda: dspy.Predict("q -> a"))
+    fresh_registry.register("b", lambda: dspy.Predict("q -> a"))
+    with pytest.raises(ValueError, match=r"Registered: \['a', 'b'\]"):
+        fresh_registry.register("a", lambda: dspy.Predict("q -> a"))
+
+
+def test_unregister_then_register_different_object_succeeds(fresh_registry):
+    """unregister() frees the name so a deliberate replacement registers cleanly."""
+    fresh_registry.register("x", lambda: dspy.Predict("q -> a"))
+    fresh_registry.unregister("x")
+    assert "x" not in fresh_registry
+    # A different object now registers without conflict.
+    fresh_registry.register("x", lambda: dspy.ChainOfThought("q -> a"))
+    assert "x" in fresh_registry
+
+
+def test_unregister_unknown_name_is_noop(fresh_registry):
+    """Unregistering a name that was never registered does not raise."""
+    fresh_registry.unregister("never_here")  # silent no-op
+
+
+def test_bad_source_does_not_poison_sources(fresh_registry):
+    """A non-module/non-callable raises TypeError WITHOUT recording the name, so a
+    later VALID register of the same name succeeds (the conflict guard isn't
+    tripped by a half-written registration)."""
+    with pytest.raises(TypeError, match=r"OR a dspy\.Module instance"):
+        fresh_registry.register("x", object())
+    assert "x" not in fresh_registry
+    # The failed attempt left no trace, so a real builder registers fine.
+    fresh_registry.register("x", lambda: dspy.Predict("q -> a"))
+    assert "x" in fresh_registry
+
+
+def test_unregister_program_module_wrapper(dummy_lm):
+    """The module-level unregister_program removes a name from the global registry
+    (the restore_registry fixture rolls back any leftover)."""
+    register_program("temp_prog", lambda: dspy.Predict("q -> a"))
+    assert "temp_prog" in default_registry()
+    unregister_program("temp_prog")
+    assert "temp_prog" not in default_registry()
+
+
+# --- #36: snapshot/restore isolation (paired cross-test leak checks) ----------
+# These two tests register the SAME global name with DIFFERENT objects. If the
+# autouse restore_registry fixture didn't roll the registry back between them,
+# the second would hit #30's conflict raise (or see the other's builder). Each
+# asserts its own registration is present and the other's hasn't leaked in.
+
+
+def test_snapshot_restore_no_leak_first():
+    register_program("leaky", lambda: dspy.Predict("first -> out"))
+    assert "leaky" in default_registry()
+
+
+def test_snapshot_restore_no_leak_second():
+    # If "leaky" leaked from the first test (same name, different object), this
+    # register_program would raise #30's conflict error -- so a clean pass proves
+    # the snapshot/restore rolled the first test's registration back.
+    register_program("leaky", lambda: dspy.Predict("second -> out"))
+    assert "leaky" in default_registry()
+
+
+def test_snapshot_restore_modes_do_not_leak_set():
+    """Set a mode on a name; a sibling test asserts mode_for is None for it,
+    proving _modes is snapshot/restored too (not just _builders)."""
+    register_program("moded", lambda: dspy.Predict("q -> a"), mode=dt.RunMode.FINE)
+    assert default_registry().mode_for("moded") == dt.RunMode.FINE
+
+
+def test_snapshot_restore_modes_do_not_leak_check():
+    # "moded" registered with FINE in the sibling test must not survive here.
+    assert default_registry().mode_for("moded") is None
+
+
+# --- #29: mode storage + mode_for --------------------------------------------
+
+
+def test_register_program_stores_mode_and_mode_for_reads_it(fresh_registry):
+    fresh_registry.register("m", lambda: dspy.Predict("q -> a"), mode=dt.RunMode.FINE)
+    assert fresh_registry.mode_for("m") == dt.RunMode.FINE
+
+
+def test_mode_for_none_when_registered_without_mode(fresh_registry):
+    fresh_registry.register("m", lambda: dspy.Predict("q -> a"))
+    assert fresh_registry.mode_for("m") is None
+
+
+def test_mode_for_none_when_unregistered(fresh_registry):
+    assert fresh_registry.mode_for("absent") is None
+
+
+def test_unregister_drops_mode(fresh_registry):
+    fresh_registry.register("m", lambda: dspy.Predict("q -> a"), mode=dt.RunMode.COARSE)
+    fresh_registry.unregister("m")
+    assert fresh_registry.mode_for("m") is None
+
+
+# --- #28: invalidation listener hook -----------------------------------------
+
+
+def test_add_invalidation_listener_fires_on_register(fresh_registry):
+    fired = []
+    fresh_registry.add_invalidation_listener(fired.append)
+    fresh_registry.register("a", lambda: dspy.Predict("q -> a"))
+    assert fired == ["a"]
+
+
+def test_invalidation_listener_fires_again_after_unregister_register(fresh_registry):
+    """A genuine replace (unregister then register a new object) fires the listener
+    a second time -- this is the eviction trigger the fine cache relies on."""
+    fired = []
+    fresh_registry.add_invalidation_listener(fired.append)
+    fresh_registry.register("a", lambda: dspy.Predict("q -> a"))
+    fresh_registry.unregister("a")
+    fresh_registry.register("a", lambda: dspy.ChainOfThought("q -> a"))
+    assert fired == ["a", "a"]
+
+
+def test_invalidation_listener_not_fired_on_same_object_noop(fresh_registry):
+    """The same-object re-register returns early, BEFORE the listener loop, so it
+    does not fire (a no-op must not invalidate caches)."""
+    fired = []
+
+    def builder():
+        return dspy.Predict("q -> a")
+
+    fresh_registry.add_invalidation_listener(fired.append)
+    fresh_registry.register("a", builder)
+    fresh_registry.register("a", builder)  # same object -> no-op, no fire
+    assert fired == ["a"]

@@ -37,7 +37,9 @@ async def test_activity_span_parents_dspy_spans(otel, dummy_lm):
     exporter.clear()
 
     interceptor = setup_tracing(tracer_provider=provider, set_global=False)
-    register_program("qa", lambda: dspy.ChainOfThought("question -> answer"))
+    register_program(
+        "qa", lambda: dspy.ChainOfThought("question -> answer"), mode=dt.RunMode.COARSE
+    )
     dt.set_worker_lm(dummy_lm)
 
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"

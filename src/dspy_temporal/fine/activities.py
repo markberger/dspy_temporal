@@ -21,6 +21,7 @@ without ever putting an LM or its credentials on the wire.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import dspy
@@ -57,12 +58,22 @@ _SECRET_KWARGS = ("api_key", "api_base", "base_url")
 # predictor->LM mapping so lm_call_activity doesn't rebuild the program every
 # call. Only *bound* LMs are cached (stable, builder-defined); predictors with no
 # bound LM resolve to the *current* worker default, read fresh each call.
+#
+# Concurrency: fine-mode activities race in a shared ThreadPoolExecutor, so this
+# dict is guarded by ``_LM_MAP_CACHE_LOCK``. We build a program's map *outside*
+# the lock (build() can be slow) and insert first-writer-wins via ``setdefault``,
+# so concurrent first-callers never hold the lock across a build and at most one
+# built map wins. A registry invalidation listener (``_evict_lm_map_entry``,
+# subscribed at import) drops a name's entry when it's re-registered, so a
+# replaced builder never serves a stale predictor->LM map.
 _LM_MAP_CACHE: dict[str, dict[str, Any]] = {}
+_LM_MAP_CACHE_LOCK = threading.Lock()
 
 
 def clear_lm_map_cache() -> None:
     """Drop the per-program LM map cache (used by tests for isolation)."""
-    _LM_MAP_CACHE.clear()
+    with _LM_MAP_CACHE_LOCK:
+        _LM_MAP_CACHE.clear()
 
 
 def _with_tracing_callback(ctx_kwargs: dict) -> dict:
@@ -133,15 +144,20 @@ def _resolve_lm(program_name: str | None, lm_ref: str | None) -> dspy.BaseLM:
     if not program_name or not lm_ref or lm_ref == DEFAULT_LM_REF:
         return worker_lm
 
-    cache = _LM_MAP_CACHE.get(program_name)
+    cache = _LM_MAP_CACHE.get(program_name)  # fast path: no lock once populated
     if cache is None:
+        # Build OUTSIDE the lock (build() can be slow); concurrent first-callers
+        # may each build, but setdefault below makes the first insert win and the
+        # rest discard their copy -- so the cache is consistent and we never hold
+        # the lock across a build.
         program = default_registry().build(program_name)
         # all_named_predictors so a compiled sub-module's lm_ref resolves to its
         # bound .lm (keys must match describe_lms_activity / the workflow binding).
-        cache = {
+        built = {
             name: getattr(p, "lm", None) for name, p in all_named_predictors(program)
         }
-        _LM_MAP_CACHE[program_name] = cache
+        with _LM_MAP_CACHE_LOCK:
+            cache = _LM_MAP_CACHE.setdefault(program_name, built)  # first-writer-wins
     return cache.get(lm_ref) or worker_lm
 
 
@@ -189,3 +205,15 @@ def tool_call_activity(call: ToolCallInput) -> ToolCallOutput:
         result = tool(**call.args)
 
     return ToolCallOutput(observation=_jsonify(result))
+
+
+def _evict_lm_map_entry(name: str) -> None:
+    """Drop one program's cached LM map (registry invalidation listener)."""
+    with _LM_MAP_CACHE_LOCK:
+        _LM_MAP_CACHE.pop(name, None)
+
+
+# Subscribe at import so any (re-)registration of a program name evicts its stale
+# LM map. The registry stays dspy-free (it never imports this module); the
+# dependency points one way, fine -> registry.
+default_registry().add_invalidation_listener(_evict_lm_map_entry)

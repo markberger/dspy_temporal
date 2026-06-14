@@ -12,8 +12,10 @@ The handle is the single source of truth for how the program runs:
 - ``await handle.start(client, **inputs)`` -- start the program as a standalone
   workflow from a client, using the handle's own ``mode`` + ``task_queue``.
 
-``dspy_temporal.run_program(client, name, inputs, *, task_queue, ...)`` is the
-low-level by-name escape hatch ``start`` delegates to.
+``deploy`` records the program's ``mode`` in the registry, so a later by-name
+``dspy_temporal.run_program(client, name, inputs, *, task_queue, ...)`` resolves
+the same mode (and rejects a conflicting explicit one). That ``run_program`` is
+the low-level by-name escape hatch ``start`` delegates to.
 """
 
 from __future__ import annotations
@@ -111,6 +113,10 @@ def deploy(
     its prototype stays in worker memory and each run gets a fresh, LM-stripped
     clone) or a zero-arg builder. ``task_queue`` is required (no default); the
     returned handle carries it along with ``mode``.
+
+    ``mode`` is recorded in the registry, so a by-name ``run_program`` for this
+    name resolves the same mode and rejects a conflicting explicit one (the
+    handle's own ``start`` always passes the matching mode, so it never collides).
     """
-    register_program(name, source)
+    register_program(name, source, mode=mode)
     return TemporalProgram(name=name, task_queue=task_queue, mode=mode)

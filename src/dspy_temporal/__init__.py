@@ -24,8 +24,8 @@ from .worker import build_worker
 #   - the in-your-workflow compose seams ``execute_coarse`` / ``execute_fine`` ->
 #     ``dspy_temporal.execute`` (``agent.run()`` is the headline compose verb)
 #   - ``data_converter`` -> ``dspy_temporal.converter``
-#   - ``register_program`` / ``default_registry`` / ``ProgramRegistry`` ->
-#     ``dspy_temporal.registry``
+#   - ``register_program`` / ``unregister_program`` / ``default_registry`` /
+#     ``ProgramRegistry`` -> ``dspy_temporal.registry``
 #   - ``get_worker_lm`` / ``clear_worker_lm`` -> ``dspy_temporal.config``
 __all__ = [  # noqa: RUF022 -- grouped by concern, not alphabetized
     "__version__",

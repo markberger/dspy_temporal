@@ -9,7 +9,11 @@ from dspy.utils.dummies import DummyLM
 
 import dspy_temporal as dt
 from dspy_temporal import config as config_mod
-from dspy_temporal.registry import ProgramRegistry, register_program
+from dspy_temporal.registry import (
+    ProgramRegistry,
+    default_registry,
+    register_program,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -29,6 +33,35 @@ def reset_worker_lm():
         clear_lm_map_cache()
 
 
+@pytest.fixture(autouse=True)
+def restore_registry():
+    """Snapshot the process-global registry's maps and restore them after a test.
+
+    Without this, the conflict guard (#30) would make a name registered by one
+    test raise in the next test that re-registers it with a different object. We
+    snapshot/restore rather than blanket-clear so import-time registrations
+    (e.g. an example module's ``deploy`` at import) survive *within* a test and
+    then roll back cleanly between tests.
+
+    Note: ``_listeners`` is deliberately NOT snapshotted/restored. It is process
+    infrastructure (the fine-mode cache's eviction hook subscribed once at import)
+    and must persist across every test, not be reset per test.
+    """
+    reg = default_registry()
+    saved_builders = dict(reg._builders)
+    saved_sources = dict(reg._sources)
+    saved_modes = dict(reg._modes)
+    try:
+        yield
+    finally:
+        reg._builders.clear()
+        reg._builders.update(saved_builders)
+        reg._sources.clear()
+        reg._sources.update(saved_sources)
+        reg._modes.clear()
+        reg._modes.update(saved_modes)
+
+
 @pytest.fixture
 def fresh_registry():
     """A clean ProgramRegistry instance (isolated from the process-global one)."""
@@ -46,7 +79,9 @@ def dummy_lm():
 @pytest.fixture
 def qa_program(dummy_lm):
     """Register a 'qa' program and set the worker LM to the dummy LM."""
-    register_program("qa", lambda: dspy.ChainOfThought("question -> answer"))
+    register_program(
+        "qa", lambda: dspy.ChainOfThought("question -> answer"), mode=dt.RunMode.COARSE
+    )
     dt.set_worker_lm(dummy_lm)
     return "qa"
 
@@ -131,7 +166,7 @@ def fine_react():
     """
     _REACT_CALLS.update(react=0, extract=0, tool=0)
     _REACT_STATE.update(extract_failed=False)
-    register_program("weather_agent", _build_weather_react)
+    register_program("weather_agent", _build_weather_react, mode=dt.RunMode.FINE)
     dt.set_worker_lm(ReActWorkerLM())
     return SimpleNamespace(
         name="weather_agent",

@@ -7,6 +7,7 @@ examples/compose_program.py) chains two such calls across a ``workflow.sleep`` a
 is served on the same worker via ``build_worker(extra_workflows=[...])``.
 """
 
+import importlib
 import sys
 import uuid
 from pathlib import Path
@@ -22,11 +23,20 @@ EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples"
 
 @pytest.fixture
 def compose_example():
-    """Import the compose example (registers "compose_qa" + ResearchWorkflow)."""
+    """Import the compose example (registers "compose_qa" + ResearchWorkflow).
+
+    Forces a fresh execution of the module body (evicting it -- and the
+    ``compose_agents`` module it passthrough-imports its ``deploy`` from -- from
+    ``sys.modules`` first) so the import-time ``deploy`` re-runs inside this
+    test's registry-snapshot window -- the autouse ``restore_registry`` fixture
+    rolls back each test's registrations, so a once-per-session import would
+    leave "compose_qa" unregistered by the time this test runs.
+    """
     sys.path.insert(0, str(EXAMPLES_DIR))
     try:
-        import compose_program
-
+        sys.modules.pop("compose_program", None)
+        sys.modules.pop("compose_agents", None)
+        compose_program = importlib.import_module("compose_program")
         yield compose_program
     finally:
         sys.path.remove(str(EXAMPLES_DIR))

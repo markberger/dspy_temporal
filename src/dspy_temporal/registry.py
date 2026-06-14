@@ -18,6 +18,12 @@ from collections.abc import Callable
 
 import dspy
 
+# RunMode is the dspy-free run-mode enum from options.py (NOT config.py, which
+# imports dspy). Keeping the import here means registry.py never imports dspy
+# machinery beyond ``dspy`` itself and never touches the fine/ or coarse/ layers
+# -- preserving the one-directional ``fine -> registry`` layering.
+from .options import RunMode
+
 ModuleBuilder = Callable[[], dspy.Module]
 # Either a zero-arg builder or a live prototype instance the registry clones.
 ModuleSource = ModuleBuilder | dspy.Module
@@ -80,17 +86,60 @@ class ProgramRegistry:
     A registered prototype instance is normalized at registration time into a
     builder closure that clones it (LM-stripped) on each ``build()``, so the rest
     of the registry only ever deals with builders.
+
+    Alongside the builder map the registry keeps two parallel maps and a hook:
+
+    - ``_sources``: the *original* object each name was registered with, used to
+      enforce conflict semantics. Re-registering the **same object** under a name
+      is a no-op (a worker that re-imports a module shouldn't error); registering
+      a **different object** under an already-taken name raises -- callers must
+      :meth:`unregister` first to replace deliberately.
+    - ``_modes``: the :class:`RunMode` a name was registered with (via ``deploy``
+      / ``register_program(..., mode=...)``), or absent if registered without one.
+      :meth:`mode_for` reads it so the client can resolve a run mode from the
+      registry instead of trusting a possibly-mismatched explicit argument.
+    - ``_listeners``: invalidation callbacks fired with a program *name* after each
+      genuine (re-)registration. The fine-mode LM-map cache subscribes here to
+      evict a stale entry when a name is re-registered. Kept generic and
+      dspy-free so the registry never imports its subscribers.
     """
 
     def __init__(self) -> None:
         self._builders: dict[str, ModuleBuilder] = {}
+        # name -> original registered object, for conflict detection (#30).
+        self._sources: dict[str, ModuleSource] = {}
+        # name -> registered run mode, or absent if registered without one (#29).
+        self._modes: dict[str, RunMode] = {}
+        # Invalidation callbacks, fired with a name on each (re-)registration (#28).
+        self._listeners: list[Callable[[str], None]] = []
 
-    def register(self, name: str, source: ModuleSource) -> None:
+    def register(
+        self, name: str, source: ModuleSource, *, mode: RunMode | None = None
+    ) -> None:
         """Register a zero-arg builder *or* a live ``dspy.Module`` prototype.
 
         A prototype is normalized into a builder that mints a fresh, LM-stripped
         ``deepcopy`` per call (preserving compiled demos, dropping bound LMs).
+
+        Re-registering the **same** ``source`` object under ``name`` is a no-op
+        (so a worker re-importing a module that calls ``register_program`` at
+        import time doesn't error). Registering a **different** object under an
+        already-taken ``name`` raises :class:`ValueError`: call :meth:`unregister`
+        first to replace it deliberately. ``mode``, when given, is recorded so the
+        client can resolve the run mode from the registry (see :meth:`mode_for`).
         """
+        # Conflict check first, before any normalization/mutation, so a same-object
+        # re-import returns untouched and a different-object collision can't half-
+        # write the builder map.
+        if name in self._sources:
+            if self._sources[name] is source:
+                return  # same object re-imported (worker reload): no-op
+            raise ValueError(
+                f"Program {name!r} is already registered to a different object. "
+                f"Registered: {sorted(self._sources)}. To replace it deliberately, "
+                f"call unregister({name!r}) first, then register the new program."
+            )
+
         if isinstance(source, dspy.Module):
             prototype = source
 
@@ -106,6 +155,34 @@ class ProgramRegistry:
                 f"dspy.Module OR a dspy.Module instance, got "
                 f"{type(source).__name__}."
             )
+
+        # Record source + mode only after the builder is stored, so a bad-source
+        # TypeError above leaves _sources/_modes untouched (a later valid register
+        # of the same name then succeeds). The listener fire is last, so it runs
+        # exactly on a genuine first/replace registration -- never on the same-
+        # object no-op above (which already returned).
+        self._sources[name] = source
+        if mode is not None:
+            self._modes[name] = mode
+        for cb in self._listeners:
+            cb(name)
+
+    def unregister(self, name: str) -> None:
+        """Remove a program by name. Unknown name is a silent no-op."""
+        self._builders.pop(name, None)
+        self._sources.pop(name, None)
+        self._modes.pop(name, None)
+
+    def mode_for(self, name: str) -> RunMode | None:
+        """The registered run mode for ``name``, or None if registered without one
+        (e.g. via the low-level register_program) or not registered at all."""
+        return self._modes.get(name)
+
+    def add_invalidation_listener(self, cb: Callable[[str], None]) -> None:
+        """Register a callback fired with a program *name* after each successful
+        (re-)registration. Generic and dspy-free: the registry never imports the
+        subscriber (keeps the fine -> registry layering one-directional)."""
+        self._listeners.append(cb)
 
     def build(self, name: str) -> dspy.Module:
         try:
@@ -140,6 +217,18 @@ def default_registry() -> ProgramRegistry:
     return _DEFAULT_REGISTRY
 
 
-def register_program(name: str, source: ModuleSource) -> None:
-    """Register a program builder or prototype instance in the global registry."""
-    _DEFAULT_REGISTRY.register(name, source)
+def register_program(
+    name: str, source: ModuleSource, *, mode: RunMode | None = None
+) -> None:
+    """Register a program builder or prototype instance in the global registry.
+
+    Pass ``mode`` to record the program's run mode (``deploy`` does this); omit it
+    to register without one (the client then requires an explicit mode to run it
+    by name). Conflict semantics follow :meth:`ProgramRegistry.register`.
+    """
+    _DEFAULT_REGISTRY.register(name, source, mode=mode)
+
+
+def unregister_program(name: str) -> None:
+    """Remove a program from the global registry (no-op if absent)."""
+    _DEFAULT_REGISTRY.unregister(name)
