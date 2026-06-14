@@ -25,8 +25,23 @@ workflows — with retries, timeouts, and observability — without writing Temp
 ## Install
 
 ```bash
-uv sync --extra dev
+uv sync --all-extras   # dev + tracing; the full test suite needs both
 ```
+
+## Parallel work (git worktrees)
+
+To run several Claude/dev sessions at once — each on its own branch — spin up a
+worktree:
+
+```bash
+scripts/wt new my-feature      # creates .worktrees/my-feature with its own venv + .env
+cd .worktrees/my-feature
+```
+
+`scripts/wt list` / `scripts/wt rm <name>` manage them. Editing, `pytest`, and
+`ruff` are collision-free across worktrees; the live `docker compose` stack is
+the one thing only one worktree may run at a time. See [CLAUDE.md](CLAUDE.md)
+for the rules.
 
 ## Usage
 
@@ -296,7 +311,7 @@ stack restarts.
 ## Formatting
 
 Code is formatted and imports sorted with [Ruff](https://docs.astral.sh/ruff/),
-configured in `pyproject.toml` (`[tool.ruff]`). After `uv sync --extra dev`, enable the
+configured in `pyproject.toml` (`[tool.ruff]`). After `uv sync --all-extras`, enable the
 git hook once so formatting runs automatically on every commit:
 
 ```bash
@@ -328,7 +343,7 @@ API keys. Coverage is 100% line+branch with a 90% floor (`fail_under`).
 CI-style gate:
 
 ```bash
-uv sync --extra dev
+uv sync --all-extras
 uv run pytest --cov=dspy_temporal --cov-branch \
   --cov-report=term-missing --cov-report=xml --cov-fail-under=90
 ```
