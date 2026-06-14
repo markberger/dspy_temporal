@@ -6,6 +6,13 @@ workflow logic (timers, other activities, child workflows) and the whole thing i
 one durable, replayable execution. Outside a workflow the same call degrades to a
 plain local DSPy call.
 
+This file is the *workflow file*: Temporal's sandbox re-execs it on every
+workflow task for deterministic isolation, so it must stay free of import-time
+side effects. The ``deploy`` that registers ``"compose_qa"`` therefore lives in
+``compose_agents.py``; we passthrough-import the handle so the sandbox reuses the
+worker process's already-deployed program instead of re-running ``deploy`` (which
+would rebuild and re-register the program on every task).
+
 Register the user workflow on the worker via ``build_worker(...,
 extra_workflows=[ResearchWorkflow])`` or ``DSPyPlugin(extra_workflows=[...])``.
 Imported by ``examples/worker.py`` (serves the workflow) and
@@ -14,20 +21,16 @@ Imported by ``examples/worker.py`` (serves the workflow) and
 
 from datetime import timedelta
 
-import dspy
 from temporalio import workflow
 
-import dspy_temporal as dt
-
-TASK_QUEUE = "dspy-temporal-example"
-
-# A deployed program, composed into the workflow below via agent.run().
-triage_agent = dt.deploy(
-    lambda: dspy.ChainOfThought("question -> answer"),
-    name="compose_qa",
-    mode=dt.RunMode.COARSE,
-    task_queue=TASK_QUEUE,
-)
+# Passthrough so the sandbox references the worker process's already-loaded
+# module (and its one-time deploy) instead of re-executing it each task. Outside
+# the sandbox (a normal host import) this context manager is a no-op.
+with workflow.unsafe.imports_passed_through():
+    from compose_agents import (  # noqa: F401  (TASK_QUEUE re-exported for run_compose.py)
+        TASK_QUEUE,
+        triage_agent,
+    )
 
 
 @workflow.defn(name="ResearchWorkflow")

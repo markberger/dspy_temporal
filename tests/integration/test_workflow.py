@@ -51,7 +51,7 @@ class FlakyProgram(dspy.Module):
 @pytest.mark.asyncio
 async def test_activity_is_retried(dummy_lm):
     _ATTEMPTS["n"] = 0
-    register_program("flaky", FlakyProgram)
+    register_program("flaky", FlakyProgram, mode=dt.RunMode.COARSE)
     dt.set_worker_lm(dummy_lm)
 
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
@@ -101,7 +101,7 @@ async def test_coarse_activity_heartbeats_past_its_timeout():
     forward before any real beat lands.
     """
     clear_worker_lm()  # SlowProgram makes no LM call
-    register_program("slow", SlowProgram)
+    register_program("slow", SlowProgram, mode=dt.RunMode.COARSE)
 
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
     options = CallOptions(

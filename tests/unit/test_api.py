@@ -15,10 +15,11 @@ import pytest
 import dspy_temporal as dt
 from dspy_temporal.coarse import api as api_mod
 from dspy_temporal.coarse.api import TemporalProgram
+from dspy_temporal.coarse.workflow import DSPyProgramWorkflow
 from dspy_temporal.config import CallOptions, RunMode
 from dspy_temporal.fine.workflow import DSPyProgramFineWorkflow
 from dspy_temporal.models import ProgramCallInput, ProgramCallOutput
-from dspy_temporal.registry import default_registry
+from dspy_temporal.registry import default_registry, register_program
 
 
 class FakeClient:
@@ -71,6 +72,22 @@ def test_deploy_requires_task_queue():
         dt.deploy(lambda: dspy.Predict("q -> a"), name="no_tq")
 
 
+def test_deploy_refused_in_sandbox(monkeypatch):
+    """deploy() funnels through register_program, so it inherits the sandbox
+    guardrail: a top-level deploy() in a workflow file (which the sandbox re-execs
+    each task) is refused with a RuntimeError pointing at the host-module split."""
+    from dspy_temporal import registry as registry_mod
+
+    monkeypatch.setattr(
+        registry_mod.workflow.unsafe, "in_sandbox", lambda: True, raising=True
+    )
+    with pytest.raises(RuntimeError, match=r"sandbox"):
+        dt.deploy(
+            lambda: dspy.Predict("q -> a"), name="sandbox_deploy", task_queue="tq"
+        )
+    assert "sandbox_deploy" not in default_registry()
+
+
 # --- run_program (low-level by-name path) ------------------------------------
 
 
@@ -78,7 +95,9 @@ def test_deploy_requires_task_queue():
 async def test_run_program_generates_default_workflow_id():
     client = FakeClient()
 
-    pred = await dt.run_program(client, "qa", {"question": "sky?"}, task_queue="tq")
+    pred = await dt.run_program(
+        client, "qa", {"question": "sky?"}, task_queue="tq", mode=dt.RunMode.COARSE
+    )
 
     assert pred.answer == "blue"
     call = client.calls[0]
@@ -99,6 +118,7 @@ async def test_run_program_honors_overrides():
         task_queue="tq-override",
         workflow_id="wf-explicit",
         options=opts,
+        mode=dt.RunMode.COARSE,
     )
 
     call = client.calls[0]
@@ -254,3 +274,103 @@ async def test_run_outside_workflow_fine_runs_in_process(monkeypatch, dummy_lm):
 
 async def _should_not_call(*args, **kwargs):  # pragma: no cover - guard
     raise AssertionError("the wrong execute_* coroutine was dispatched")
+
+
+# --- #29: run_program resolves the run mode from the registry ----------------
+# Every branch of the resolution: registered-with-mode (omit / equal / conflict),
+# registered-without-mode (omit / explicit), and unregistered (omit / explicit).
+
+
+@pytest.mark.asyncio
+async def test_run_program_registered_with_mode_resolves_without_explicit():
+    """A name deployed FINE runs FINE when called by name with no explicit mode."""
+    client = FakeClient()
+    dt.deploy(
+        lambda: dspy.Predict("q -> a"), name="r29f", task_queue="tq", mode=RunMode.FINE
+    )
+    await dt.run_program(client, "r29f", {"question": "?"}, task_queue="tq")
+    assert client.calls[0]["run"] == DSPyProgramFineWorkflow.run
+
+
+@pytest.mark.asyncio
+async def test_run_program_registered_with_mode_explicit_equal_ok():
+    """Passing the matching explicit mode is accepted (no conflict)."""
+    client = FakeClient()
+    dt.deploy(
+        lambda: dspy.Predict("q -> a"),
+        name="r29e",
+        task_queue="tq",
+        mode=RunMode.COARSE,
+    )
+    await dt.run_program(
+        client, "r29e", {"question": "?"}, task_queue="tq", mode=RunMode.COARSE
+    )
+    assert client.calls[0]["run"] == DSPyProgramWorkflow.run
+
+
+@pytest.mark.asyncio
+async def test_run_program_registered_with_mode_explicit_conflict_raises():
+    """Deployed COARSE but called with mode=FINE -> a clear conflict ValueError."""
+    client = FakeClient()
+    dt.deploy(
+        lambda: dspy.Predict("q -> a"),
+        name="r29c",
+        task_queue="tq",
+        mode=RunMode.COARSE,
+    )
+    with pytest.raises(ValueError, match=r"registered as mode='coarse'.*'fine'"):
+        await dt.run_program(
+            client, "r29c", {"question": "?"}, task_queue="tq", mode=RunMode.FINE
+        )
+    assert client.calls == []  # never dispatched
+
+
+@pytest.mark.asyncio
+async def test_run_program_registered_without_mode_requires_explicit():
+    """register_program without a mode + no explicit mode -> ValueError."""
+    client = FakeClient()
+    register_program("r29nm", lambda: dspy.Predict("q -> a"))  # no mode
+    with pytest.raises(ValueError, match=r"registered without a run mode"):
+        await dt.run_program(client, "r29nm", {"question": "?"}, task_queue="tq")
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_run_program_registered_without_mode_explicit_is_trusted():
+    """register_program without a mode but an explicit mode given -> trusted."""
+    client = FakeClient()
+    register_program("r29nm2", lambda: dspy.Predict("q -> a"))  # no mode
+    await dt.run_program(
+        client, "r29nm2", {"question": "?"}, task_queue="tq", mode=RunMode.FINE
+    )
+    assert client.calls[0]["run"] == DSPyProgramFineWorkflow.run
+
+
+@pytest.mark.asyncio
+async def test_run_program_unregistered_requires_explicit_mode():
+    """An unregistered name with no explicit mode is ambiguous -> ValueError."""
+    client = FakeClient()
+    with pytest.raises(ValueError, match=r"not registered in this process"):
+        await dt.run_program(client, "never_deployed", {"q": "?"}, task_queue="tq")
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_run_program_unregistered_with_explicit_mode_is_trusted():
+    """An unregistered name with an explicit mode is the thin-client escape hatch."""
+    client = FakeClient()
+    await dt.run_program(
+        client, "thin_client", {"q": "?"}, task_queue="tq", mode=RunMode.COARSE
+    )
+    assert client.calls[0]["run"] == DSPyProgramWorkflow.run
+
+
+def test_deploy_records_mode_in_registry():
+    """deploy stores its mode in the registry (mode_for reads it back)."""
+    dt.deploy(
+        lambda: dspy.Predict("q -> a"),
+        name="r29dep",
+        task_queue="tq",
+        mode=RunMode.FINE,
+    )
+    assert default_registry().mode_for("r29dep") == RunMode.FINE

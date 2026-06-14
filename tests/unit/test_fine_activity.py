@@ -5,6 +5,9 @@ already-processed outputs + usage read from an *isolated* history, and the tool
 call runs the named tool (sync or async) and returns its observation.
 """
 
+import threading
+import time
+
 import dspy
 import pytest
 from dspy.utils.dummies import DummyLM
@@ -13,7 +16,11 @@ from temporalio.testing import ActivityEnvironment
 import dspy_temporal as dt
 from dspy_temporal import config as config_mod
 from dspy_temporal.config import clear_worker_lm
+from dspy_temporal.fine import activities as fine_activities
 from dspy_temporal.fine.activities import (
+    _evict_lm_map_entry,
+    _resolve_lm,
+    clear_lm_map_cache,
     describe_lms_activity,
     lm_call_activity,
     tool_call_activity,
@@ -26,7 +33,11 @@ from dspy_temporal.models import (
     ToolCallInput,
     ToolCallOutput,
 )
-from dspy_temporal.registry import register_program
+from dspy_temporal.registry import (
+    default_registry,
+    register_program,
+    unregister_program,
+)
 
 
 class _TwoPredictor(dspy.Module):
@@ -246,3 +257,136 @@ def test_tool_call_activity_program_without_tools_raises(qa_program):
     call = ToolCallInput(program=qa_program, tool_name="anything", args={})
     with pytest.raises(KeyError, match="no tool named"):
         env.run(tool_call_activity, call)
+
+
+# --- #28: thread-safe _LM_MAP_CACHE + registry-invalidation eviction ----------
+
+
+def test_resolve_lm_builds_program_once_and_caches(monkeypatch):
+    """The per-program LM map is built once: a second _resolve_lm for the same
+    program serves the cached map without rebuilding (first-writer-wins cache)."""
+    register_program(
+        "cached", lambda: _TwoPredictor(bound_lm=DummyLM([{"answer": "BOUND"}] * 5))
+    )
+    dt.set_worker_lm(DummyLM([{"answer": "DEFAULT"}] * 5))
+    clear_lm_map_cache()
+
+    # Count real builds by wrapping the registry's build (resolve builds outside
+    # the lock, then inserts via setdefault).
+    builds = {"n": 0}
+    real_build = default_registry().build
+
+    def counting_build(name):
+        builds["n"] += 1
+        return real_build(name)
+
+    monkeypatch.setattr(default_registry(), "build", counting_build)
+
+    first = _resolve_lm("cached", "smart")
+    second = _resolve_lm("cached", "smart")
+    assert builds["n"] == 1  # built once; the second call hit the cache
+    # Same bound LM resolved both times.
+    assert first is second is not None
+
+
+def test_clear_lm_map_cache_empties_the_cache():
+    """clear_lm_map_cache (the locked path) drops every cached program map."""
+    register_program("c2", lambda: _TwoPredictor(bound_lm=DummyLM([{"answer": "B"}])))
+    dt.set_worker_lm(DummyLM([{"answer": "D"}]))
+    _resolve_lm("c2", "smart")  # populate
+    assert "c2" in fine_activities._LM_MAP_CACHE
+    clear_lm_map_cache()
+    assert fine_activities._LM_MAP_CACHE == {}
+
+
+def test_reregistration_evicts_cached_lm_map():
+    """A genuine re-register (unregister then register a NEW object) fires the
+    registry's invalidation listener, which evicts the program's stale LM map."""
+    register_program("evictme", lambda: _TwoPredictor(bound_lm=DummyLM([{"a": "1"}])))
+    dt.set_worker_lm(DummyLM([{"answer": "D"}]))
+    _resolve_lm("evictme", "smart")  # populate the cache
+    assert "evictme" in fine_activities._LM_MAP_CACHE
+
+    # A naive register-same-object-twice would no-op and NOT fire; force a REAL
+    # re-register so the invalidation listener runs.
+    unregister_program("evictme")
+    register_program("evictme", lambda: _TwoPredictor(bound_lm=DummyLM([{"a": "2"}])))
+    assert "evictme" not in fine_activities._LM_MAP_CACHE  # evicted by the listener
+
+
+def test_evict_lm_map_entry_absent_name_is_noop():
+    """Evicting a name with no cached map does not raise (pop with default)."""
+    clear_lm_map_cache()
+    _evict_lm_map_entry("never_cached")  # no KeyError
+
+
+def test_resolve_lm_concurrent_first_callers_build_once(monkeypatch):
+    """N threads racing the first resolve for a program build the map ONCE: the
+    per-name build lock serializes them, the double-check makes the late arrivals
+    reuse the first build, and every caller sees the same map (#8 deepcopy waste)."""
+    register_program(
+        "race", lambda: _TwoPredictor(bound_lm=DummyLM([{"answer": "BOUND"}] * 5))
+    )
+    dt.set_worker_lm(DummyLM([{"answer": "DEFAULT"}] * 5))
+    clear_lm_map_cache()
+
+    # A slow build so all threads pile up on the build lock before the first wins.
+    builds = {"n": 0}
+    real_build = default_registry().build
+    started = threading.Event()
+
+    def slow_build(name):
+        builds["n"] += 1
+        started.set()
+        time.sleep(0.05)  # widen the window for the other threads to queue
+        return real_build(name)
+
+    monkeypatch.setattr(default_registry(), "build", slow_build)
+
+    results: list = []
+    barrier = threading.Barrier(8)
+
+    def worker():
+        barrier.wait()  # release all threads together
+        results.append(_resolve_lm("race", "smart"))
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert builds["n"] == 1  # built exactly once despite 8 concurrent first-callers
+    # Every thread resolved the same (single) bound LM object from the shared map.
+    assert len(results) == 8
+    assert all(r is results[0] is not None for r in results)
+    assert fine_activities._LM_MAP_CACHE["race"]["smart"] is results[0]
+
+
+def test_resolve_lm_discards_stale_build_after_reregister(monkeypatch):
+    """If a re-registration bumps the generation *during* a build, that build is
+    returned to its caller but NOT installed in the cache -- so the stale map never
+    re-poisons the cache after eviction (#1 re-poisoning race)."""
+    register_program("stale", lambda: _TwoPredictor(bound_lm=DummyLM([{"a": "1"}])))
+    dt.set_worker_lm(DummyLM([{"answer": "D"}] * 5))
+    clear_lm_map_cache()
+
+    # Build hook that, mid-build, simulates a concurrent re-registration: evict the
+    # entry and bump the registry generation (exactly what the invalidation
+    # listener does on a real re-register), so the post-build generation check fails.
+    real_build = default_registry().build
+
+    def reregistering_build(name):
+        program = real_build(name)
+        # Genuine re-register bumps the generation + fires _evict_lm_map_entry.
+        unregister_program("stale")
+        register_program("stale", lambda: _TwoPredictor(bound_lm=DummyLM([{"a": "2"}])))
+        return program
+
+    monkeypatch.setattr(default_registry(), "build", reregistering_build)
+
+    lm = _resolve_lm("stale", "smart")
+    assert lm is not None  # this caller still got a usable map
+    # ...but the stale build was discarded: the cache holds no "stale" entry, so
+    # the next resolve rebuilds against the new generation.
+    assert "stale" not in fine_activities._LM_MAP_CACHE

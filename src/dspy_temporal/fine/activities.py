@@ -21,6 +21,7 @@ without ever putting an LM or its credentials on the wire.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import dspy
@@ -57,12 +58,38 @@ _SECRET_KWARGS = ("api_key", "api_base", "base_url")
 # predictor->LM mapping so lm_call_activity doesn't rebuild the program every
 # call. Only *bound* LMs are cached (stable, builder-defined); predictors with no
 # bound LM resolve to the *current* worker default, read fresh each call.
+#
+# Concurrency: fine-mode activities race in a shared ThreadPoolExecutor, so the
+# cache is guarded by ``_LM_MAP_CACHE_LOCK``. Reads take no lock (an atomic
+# dict.get on the populated fast path). On a miss the build is serialized per
+# program name by a dedicated ``_BUILD_LOCKS[name]`` so concurrent first-callers
+# build the map *once* instead of N redundant deepcopies (#8): a thread fetches
+# (or creates) that per-name lock under the cache lock, releases the cache lock,
+# acquires the build lock, double-checks the cache, and only builds if still
+# absent. Before building it stamps the registry's current generation for the
+# name; after building it installs the map under the cache lock ONLY IF the
+# generation hasn't advanced -- so a build raced by a concurrent re-registration
+# (which bumps the generation via the invalidation listener) is discarded as
+# stale rather than re-poisoning the cache (#1). The generation stamp is the
+# correctness guarantee; the per-name lock is purely the contention fix.
+# ``_evict_lm_map_entry`` (subscribed to the registry at import) drops a name's
+# entry and bumps its generation on every (re-)registration/unregistration.
 _LM_MAP_CACHE: dict[str, dict[str, Any]] = {}
+_LM_MAP_CACHE_LOCK = threading.Lock()
+# program name -> Lock serializing that name's build (created under the cache lock).
+_BUILD_LOCKS: dict[str, threading.Lock] = {}
+# program name -> registration generation observed when its cached map was built.
+# Used to discard a build that a concurrent re-registration has invalidated.
+_LM_MAP_GENERATIONS: dict[str, int] = {}
 
 
 def clear_lm_map_cache() -> None:
-    """Drop the per-program LM map cache (used by tests for isolation)."""
-    _LM_MAP_CACHE.clear()
+    """Drop the per-program LM map cache, build locks, and generation stamps
+    (used by tests for isolation)."""
+    with _LM_MAP_CACHE_LOCK:
+        _LM_MAP_CACHE.clear()
+        _BUILD_LOCKS.clear()
+        _LM_MAP_GENERATIONS.clear()
 
 
 def _with_tracing_callback(ctx_kwargs: dict) -> dict:
@@ -133,16 +160,51 @@ def _resolve_lm(program_name: str | None, lm_ref: str | None) -> dspy.BaseLM:
     if not program_name or not lm_ref or lm_ref == DEFAULT_LM_REF:
         return worker_lm
 
-    cache = _LM_MAP_CACHE.get(program_name)
+    cache = _LM_MAP_CACHE.get(program_name)  # fast path: atomic read, no lock
     if cache is None:
-        program = default_registry().build(program_name)
+        cache = _build_lm_map(program_name)
+    return cache.get(lm_ref) or worker_lm
+
+
+def _build_lm_map(program_name: str) -> dict[str, Any]:
+    """Build (or fetch a concurrently-built) program's predictor->LM map.
+
+    Serialized per name by ``_BUILD_LOCKS[program_name]`` so concurrent
+    first-callers build *once* (#8). Stamps the registry generation before the
+    build and installs the map only if that generation still holds, so a build
+    raced by a re-registration is discarded as stale rather than re-poisoning the
+    cache (#1)."""
+    registry = default_registry()
+    with _LM_MAP_CACHE_LOCK:
+        # Fetch-or-create the per-name build lock under the cache lock (so the lock
+        # dict itself stays consistent), then release before acquiring it.
+        build_lock = _BUILD_LOCKS.setdefault(program_name, threading.Lock())
+
+    with build_lock:
+        # Double-check: another thread may have populated the cache while we waited
+        # on the build lock -- if so, reuse its map and skip the redundant build.
+        cached = _LM_MAP_CACHE.get(program_name)
+        if cached is not None:
+            return cached
+
+        # Capture the generation BEFORE building: a re-registration during the
+        # build bumps it (via _evict_lm_map_entry), marking this build stale.
+        generation = registry.generation(program_name)
+        program = registry.build(program_name)
         # all_named_predictors so a compiled sub-module's lm_ref resolves to its
         # bound .lm (keys must match describe_lms_activity / the workflow binding).
-        cache = {
+        built = {
             name: getattr(p, "lm", None) for name, p in all_named_predictors(program)
         }
-        _LM_MAP_CACHE[program_name] = cache
-    return cache.get(lm_ref) or worker_lm
+
+        with _LM_MAP_CACHE_LOCK:
+            # Install only if no concurrent re-registration advanced the generation;
+            # otherwise this build is stale -- return it for THIS call but don't
+            # poison the cache (the next call rebuilds against the new generation).
+            if registry.generation(program_name) == generation:
+                _LM_MAP_CACHE[program_name] = built
+                _LM_MAP_GENERATIONS[program_name] = generation
+            return built
 
 
 @activity.defn(name="dspy_lm_call")
@@ -189,3 +251,23 @@ def tool_call_activity(call: ToolCallInput) -> ToolCallOutput:
         result = tool(**call.args)
 
     return ToolCallOutput(observation=_jsonify(result))
+
+
+def _evict_lm_map_entry(name: str) -> None:
+    """Drop one program's cached LM map + its build-time generation stamp
+    (registry invalidation listener).
+
+    Fired by the registry's ``_invalidate`` *after* it has already bumped the
+    name's registration generation, so a build in flight for this name (which
+    captured the pre-bump generation) will see the advance under the cache lock
+    and discard itself as stale instead of re-poisoning the cache (#1). We also
+    drop the local generation stamp here since the map it described is gone."""
+    with _LM_MAP_CACHE_LOCK:
+        _LM_MAP_CACHE.pop(name, None)
+        _LM_MAP_GENERATIONS.pop(name, None)
+
+
+# Subscribe at import so any (re-)registration of a program name evicts its stale
+# LM map. The registry stays dspy-free (it never imports this module); the
+# dependency points one way, fine -> registry.
+default_registry().add_invalidation_listener(_evict_lm_map_entry)

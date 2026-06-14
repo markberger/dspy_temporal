@@ -106,8 +106,11 @@ print(pred.answer)
 ```
 
 `qa.start(client, **inputs)` is the standalone start; when you don't have the handle in
-scope, `dt.run_program(client, "qa", {"question": ...}, task_queue="dspy-temporal")` is the
-lower-level by-name alternative. Tune retries/timeouts per run with `CallOptions`
+scope, `dt.run_program(client, "qa", {"question": ...}, task_queue="dspy-temporal",
+mode=dt.RunMode.COARSE)` is the lower-level by-name alternative. With the handle
+(`qa.start`) or an in-process `deploy`, the mode resolves automatically; a bare by-name
+`run_program` from a process that didn't `deploy()`/import the program must pass an explicit
+`mode=`. Tune retries/timeouts per run with `CallOptions`
 (`qa.start(client, question=..., options=dt.CallOptions(maximum_attempts=5))`).
 
 Set the LM via env on the worker:
@@ -178,7 +181,9 @@ class ResearchWorkflow:
 Register the user workflow on the worker with `build_worker(..., extra_workflows=[ResearchWorkflow])`
 (or the plugin below). `agent.run()` is the one compose verb. To start the *deployed program*
 itself as a standalone workflow instead, use `await agent.start(client, ...)` (or the by-name
-`dt.run_program(client, "compose_qa", {...}, task_queue="dspy-temporal")`). Runnable example:
+`dt.run_program(client, "compose_qa", {...}, task_queue="dspy-temporal", mode=dt.RunMode.COARSE)`).
+The handle's own `start` resolves the mode for you; a by-name `run_program` from a process that
+didn't `deploy()`/import the program needs the explicit `mode=` shown. Runnable example:
 `examples/compose_program.py` + `examples/run_compose.py`.
 
 ### Wire with a plugin (client + worker)
