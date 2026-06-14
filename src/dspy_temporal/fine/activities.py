@@ -37,7 +37,7 @@ from ..models import (
     ToolCallInput,
     ToolCallOutput,
 )
-from ..registry import default_registry
+from ..registry import all_named_predictors, default_registry
 from ..serde import _jsonify, decode_lm_kwargs, json_safe
 
 # Sentinel ``lm_ref`` for the worker default LM (predictors with no bound ``.lm``).
@@ -102,8 +102,9 @@ def _spec_for(lm: dspy.BaseLM) -> LMSpec:
 def describe_lms_activity(call: LMDescribeInput) -> LMSpecsOutput:
     """Describe each predictor's effective LM for the workflow.
 
-    Builds the program on the worker, walks ``named_predictors()``, and for each
-    predictor emits an LMSpec for its bound ``.lm`` (else the worker default).
+    Builds the program on the worker, walks ``all_named_predictors()`` (which also
+    reaches predictors inside compiled sub-modules), and for each predictor emits
+    an LMSpec for its bound ``.lm`` (else the worker default).
     The ``"__default__"`` entry describes the worker LM, used for the workflow's
     context fallback and any predictor created dynamically at call time.
     """
@@ -116,7 +117,9 @@ def describe_lms_activity(call: LMDescribeInput) -> LMSpecsOutput:
 
         program = default_registry().build(call.program)
         specs = {DEFAULT_LM_REF: _spec_for(worker_lm)}
-        for name, predictor in program.named_predictors():
+        # all_named_predictors so a compiled sub-module's predictor gets its own
+        # spec under the same name the workflow binds its WorkflowLM to.
+        for name, predictor in all_named_predictors(program):
             lm = getattr(predictor, "lm", None) or worker_lm
             specs[name] = _spec_for(lm)
         return LMSpecsOutput(specs=specs)
@@ -133,7 +136,11 @@ def _resolve_lm(program_name: str | None, lm_ref: str | None) -> dspy.BaseLM:
     cache = _LM_MAP_CACHE.get(program_name)
     if cache is None:
         program = default_registry().build(program_name)
-        cache = {name: getattr(p, "lm", None) for name, p in program.named_predictors()}
+        # all_named_predictors so a compiled sub-module's lm_ref resolves to its
+        # bound .lm (keys must match describe_lms_activity / the workflow binding).
+        cache = {
+            name: getattr(p, "lm", None) for name, p in all_named_predictors(program)
+        }
         _LM_MAP_CACHE[program_name] = cache
     return cache.get(lm_ref) or worker_lm
 
