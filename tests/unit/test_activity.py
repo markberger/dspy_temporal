@@ -1,5 +1,8 @@
 """Activity-level tests using Temporal's ActivityEnvironment (no server)."""
 
+import dataclasses
+from datetime import timedelta
+
 import dspy
 import pytest
 from dspy.utils.dummies import DummyLM
@@ -21,6 +24,24 @@ def test_run_program_activity_returns_prediction(qa_program):
     assert isinstance(output, ProgramCallOutput)
     assert output.prediction["answer"] == "blue"
     assert "reasoning" in output.prediction
+
+
+def test_runs_normally_with_heartbeat_timeout_set(qa_program):
+    """The original bug: setting heartbeat_timeout made every coarse run fail.
+
+    With the watchdog wrapping the program call, a configured heartbeat_timeout no
+    longer self-destructs -- the activity heartbeats and completes normally. (A
+    DummyLM run can finish before the first beat, so the 'beats fire' assertion
+    lives in test_heartbeat.py with a controlled blocking body.)
+    """
+    env = ActivityEnvironment()
+    env.info = dataclasses.replace(env.info, heartbeat_timeout=timedelta(seconds=2))
+    call = ProgramCallInput(program="qa", inputs={"question": "color of the sky?"})
+
+    output = env.run(run_program_activity, call)
+
+    assert isinstance(output, ProgramCallOutput)
+    assert output.prediction["answer"] == "blue"
 
 
 def test_unknown_program_raises(qa_program):

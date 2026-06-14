@@ -27,6 +27,7 @@ import dspy
 from temporalio import activity
 
 from ..config import get_tracing_callback, get_worker_lm
+from ..heartbeat import heartbeating
 from ..models import (
     LMCallInput,
     LMCallOutput,
@@ -106,16 +107,19 @@ def describe_lms_activity(call: LMDescribeInput) -> LMSpecsOutput:
     The ``"__default__"`` entry describes the worker LM, used for the workflow's
     context fallback and any predictor created dynamically at call time.
     """
-    worker_lm = get_worker_lm()
-    if worker_lm is None:
-        raise RuntimeError(_NO_WORKER_LM)
+    # Heartbeat while we build the program + introspect predictors, so the
+    # option is honored identically across all activities (no-op by default).
+    with heartbeating():
+        worker_lm = get_worker_lm()
+        if worker_lm is None:
+            raise RuntimeError(_NO_WORKER_LM)
 
-    program = default_registry().build(call.program)
-    specs = {DEFAULT_LM_REF: _spec_for(worker_lm)}
-    for name, predictor in program.named_predictors():
-        lm = getattr(predictor, "lm", None) or worker_lm
-        specs[name] = _spec_for(lm)
-    return LMSpecsOutput(specs=specs)
+        program = default_registry().build(call.program)
+        specs = {DEFAULT_LM_REF: _spec_for(worker_lm)}
+        for name, predictor in program.named_predictors():
+            lm = getattr(predictor, "lm", None) or worker_lm
+            specs[name] = _spec_for(lm)
+        return LMSpecsOutput(specs=specs)
 
 
 def _resolve_lm(program_name: str | None, lm_ref: str | None) -> dspy.BaseLM:
@@ -142,7 +146,7 @@ def lm_call_activity(call: LMCallInput) -> LMCallOutput:
     # is unambiguously this call's even under concurrent activities.
     lm = base.copy()
 
-    with dspy.context(**_with_tracing_callback({})):
+    with heartbeating(), dspy.context(**_with_tracing_callback({})):
         outputs = lm(
             prompt=call.prompt,
             messages=call.messages,
@@ -174,7 +178,7 @@ def tool_call_activity(call: ToolCallInput) -> ToolCallOutput:
     # allow_tool_async_sync_conversion lets dspy.Tool run async tool functions
     # from this synchronous activity (it drives them to completion internally).
     ctx = _with_tracing_callback({"allow_tool_async_sync_conversion": True})
-    with dspy.context(**ctx):
+    with heartbeating(), dspy.context(**ctx):
         result = tool(**call.args)
 
     return ToolCallOutput(observation=_jsonify(result))

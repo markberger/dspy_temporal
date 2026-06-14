@@ -96,8 +96,7 @@ class WorkflowLM(dspy.BaseLM):
                 program=self._program,
             ),
             result_type=LMCallOutput,
-            start_to_close_timeout=self._options.start_to_close_timeout(),
-            retry_policy=self._options.retry_policy(),
+            **self._options.activity_kwargs(),
         )
 
         # Replicate dspy.LM.forward's usage-tracker side effect so the
