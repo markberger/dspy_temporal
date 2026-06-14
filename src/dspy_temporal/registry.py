@@ -19,6 +19,12 @@ from dataclasses import dataclass
 
 import dspy
 
+# temporalio is a hard dependency already, so importing ``workflow`` here is free.
+# It's used solely by the module-level register_program sandbox guardrail below
+# (registry.py is otherwise deliberately minimal-import); the pure ProgramRegistry
+# data structure never touches it.
+from temporalio import workflow
+
 # RunMode is the dspy-free run-mode enum from options.py (NOT config.py, which
 # imports dspy). Keeping the import here means registry.py never imports dspy
 # machinery beyond ``dspy`` itself and never touches the fine/ or coarse/ layers
@@ -328,7 +334,32 @@ def register_program(
     Pass ``mode`` to record the program's run mode (``deploy`` does this); omit it
     to register without one (the client then requires an explicit mode to run it
     by name). Conflict semantics follow :meth:`ProgramRegistry.register`.
+
+    Refuses to run inside the Temporal workflow sandbox (see the guardrail below).
     """
+    # Guardrail against a classic footgun: a top-level ``deploy()`` /
+    # ``register_program()`` placed in a *workflow file*. Temporal's sandbox
+    # re-execs that file on EVERY workflow task for deterministic isolation, so an
+    # import-time registration there would rebuild and re-register the program on
+    # each task (thrashing the registry + the fine-mode cache). The fix is to keep
+    # the side-effecting registration in a host module that the workflow file
+    # passthrough-imports -- see examples/compose_agents.py (the deploy) +
+    # examples/compose_program.py (the workflow, importing the handle).
+    #
+    # Use ``workflow.unsafe.in_sandbox()``, NOT ``workflow.in_workflow()``: during
+    # the sandbox's module re-exec there is no running workflow, so in_workflow()
+    # is False and would never fire. Both are False off the sandbox thread, so a
+    # normal host import never trips this.
+    if workflow.unsafe.in_sandbox():
+        raise RuntimeError(
+            f"register_program({name!r}) (or deploy()) was called inside the Temporal "
+            f"workflow sandbox. The sandbox re-execs your workflow file on every "
+            f"task, so a top-level deploy()/register_program() in a workflow file "
+            f"re-registers the program each task. Move the deploy()/register_program() "
+            f"into a separate host module and passthrough-import its handle in the "
+            f"workflow file -- see examples/compose_agents.py (the deploy) and "
+            f"examples/compose_program.py (the workflow importing the handle)."
+        )
     _DEFAULT_REGISTRY.register(name, source, mode=mode)
 
 

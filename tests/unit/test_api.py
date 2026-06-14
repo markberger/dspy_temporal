@@ -72,6 +72,22 @@ def test_deploy_requires_task_queue():
         dt.deploy(lambda: dspy.Predict("q -> a"), name="no_tq")
 
 
+def test_deploy_refused_in_sandbox(monkeypatch):
+    """deploy() funnels through register_program, so it inherits the sandbox
+    guardrail: a top-level deploy() in a workflow file (which the sandbox re-execs
+    each task) is refused with a RuntimeError pointing at the host-module split."""
+    from dspy_temporal import registry as registry_mod
+
+    monkeypatch.setattr(
+        registry_mod.workflow.unsafe, "in_sandbox", lambda: True, raising=True
+    )
+    with pytest.raises(RuntimeError, match=r"sandbox"):
+        dt.deploy(
+            lambda: dspy.Predict("q -> a"), name="sandbox_deploy", task_queue="tq"
+        )
+    assert "sandbox_deploy" not in default_registry()
+
+
 # --- run_program (low-level by-name path) ------------------------------------
 
 

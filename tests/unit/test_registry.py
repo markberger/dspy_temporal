@@ -5,6 +5,7 @@ import pytest
 from dspy.utils.dummies import DummyLM
 
 import dspy_temporal as dt
+from dspy_temporal import registry as registry_mod
 from dspy_temporal.registry import (
     all_named_predictors,
     default_registry,
@@ -400,3 +401,26 @@ def test_resolve_mode_unregistered_omitted_raises(fresh_registry):
 
 def test_resolve_mode_unregistered_explicit_is_returned(fresh_registry):
     assert fresh_registry.resolve_mode("absent", dt.RunMode.COARSE) == dt.RunMode.COARSE
+
+
+# --- sandbox guardrail on the module-level register_program -------------------
+
+
+def test_register_program_refused_in_sandbox(monkeypatch):
+    """The module-level register_program refuses to run inside the Temporal
+    workflow sandbox (a top-level deploy() in a workflow file re-execs each task).
+    Uses workflow.unsafe.in_sandbox() -- in_workflow() is False during re-exec."""
+    monkeypatch.setattr(
+        registry_mod.workflow.unsafe, "in_sandbox", lambda: True, raising=True
+    )
+    with pytest.raises(RuntimeError, match=r"sandbox.*compose_agents\.py"):
+        register_program("in_sandbox", lambda: dspy.Predict("q -> a"))
+    # The refusal happened before any mutation -- the name never registered.
+    assert "in_sandbox" not in default_registry()
+
+
+def test_register_program_allowed_off_sandbox_thread():
+    """Off the sandbox thread (the normal host import path) in_sandbox() is False,
+    so register_program proceeds -- the guard must not false-positive."""
+    register_program("host_ok", lambda: dspy.Predict("q -> a"))
+    assert "host_ok" in default_registry()
