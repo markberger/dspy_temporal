@@ -74,8 +74,9 @@ def test_build_worker_passes_through_explicit_kwargs(monkeypatch):
 
 
 def test_build_worker_respects_caller_workflow_runner(monkeypatch):
-    """A caller-supplied workflow_runner flows through to the Worker untouched
-    (the plugin only replaces the framework-default SandboxedWorkflowRunner)."""
+    """A caller-supplied workflow_runner is forwarded to the Worker constructor.
+    (That the plugin then leaves a non-default runner untouched is asserted in
+    test_plugin.py::test_configure_worker_respects_caller_runner_and_executor.)"""
     captured = _spy_worker(monkeypatch)
     sentinel = object()
     dt.build_worker(
