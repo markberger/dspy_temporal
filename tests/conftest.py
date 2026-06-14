@@ -18,9 +18,13 @@ from dspy_temporal.registry import (
 
 @pytest.fixture(autouse=True)
 def reset_worker_lm():
-    """Snapshot/restore worker LM + tracing callback around each test."""
-    from dspy_temporal.fine.activities import clear_lm_map_cache
+    """Snapshot/restore worker LM + tracing callback around each test.
 
+    The fine-mode LM-map cache eviction is NOT done here: it lives in
+    ``restore_registry``'s teardown, co-located with the registry rollback it
+    depends on (a rolled-back name must drop its now-stale cached map), so it
+    doesn't hinge on LIFO autouse-fixture teardown ordering between the two.
+    """
     saved_lm = config_mod.get_worker_lm()
     saved_cb = config_mod.get_tracing_callback()
     try:
@@ -28,38 +32,40 @@ def reset_worker_lm():
     finally:
         config_mod._WORKER_LM = saved_lm
         config_mod._TRACING_CALLBACK = saved_cb
-        # The per-program LM map is process-global; drop it so a program name
-        # reused across tests with a different builder doesn't see a stale map.
-        clear_lm_map_cache()
 
 
 @pytest.fixture(autouse=True)
 def restore_registry():
-    """Snapshot the process-global registry's maps and restore them after a test.
+    """Snapshot the process-global registry and restore it after a test.
 
     Without this, the conflict guard (#30) would make a name registered by one
     test raise in the next test that re-registers it with a different object. We
-    snapshot/restore rather than blanket-clear so import-time registrations
-    (e.g. an example module's ``deploy`` at import) survive *within* a test and
-    then roll back cleanly between tests.
+    snapshot/restore (via :meth:`ProgramRegistry.snapshot` / ``restore``) rather
+    than blanket-clear so import-time registrations (e.g. an example module's
+    ``deploy`` at import) survive *within* a test and then roll back cleanly
+    between tests.
 
-    Note: ``_listeners`` is deliberately NOT snapshotted/restored. It is process
-    infrastructure (the fine-mode cache's eviction hook subscribed once at import)
-    and must persist across every test, not be reset per test.
+    The fine-mode LM-map cache is cleared in this fixture's OWN teardown, right
+    after the registry restore: the cache is keyed off registry registrations, so
+    the rollback and the cache eviction it implies belong together rather than
+    split across ``reset_worker_lm`` (avoiding any dependence on autouse teardown
+    order). ``_listeners`` and the generation map are deliberately NOT
+    snapshotted/restored: both are process infrastructure (the cache's eviction
+    hook subscribed once at import; generations only ever advance) that must
+    persist across every test, not be reset per test.
     """
+    from dspy_temporal.fine.activities import clear_lm_map_cache
+
     reg = default_registry()
-    saved_builders = dict(reg._builders)
-    saved_sources = dict(reg._sources)
-    saved_modes = dict(reg._modes)
+    snap = reg.snapshot()
     try:
         yield
     finally:
-        reg._builders.clear()
-        reg._builders.update(saved_builders)
-        reg._sources.clear()
-        reg._sources.update(saved_sources)
-        reg._modes.clear()
-        reg._modes.update(saved_modes)
+        reg.restore(snap)
+        # The per-program LM map is process-global and keyed off the registry we
+        # just rolled back; drop it so a program name reused across tests with a
+        # different builder doesn't see a stale map.
+        clear_lm_map_cache()
 
 
 @pytest.fixture
