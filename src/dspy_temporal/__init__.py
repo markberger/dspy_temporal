@@ -4,7 +4,7 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
-from .client import run_program
+from .client import run_program, start_program_nowait
 from .coarse.api import TemporalProgram, program
 from .config import (
     CallOptions,
@@ -27,12 +27,14 @@ from .worker import build_worker
 #   - ``register_program`` / ``unregister_program`` / ``default_registry`` /
 #     ``ProgramRegistry`` -> ``dspy_temporal.registry``
 #   - ``get_worker_lm`` / ``clear_worker_lm`` -> ``dspy_temporal.config``
+#   - ``prediction_of`` (decode a start_program_nowait handle) -> ``dspy_temporal.client``
 __all__ = [  # noqa: RUF022 -- grouped by concern, not alphabetized
     "__version__",
     # declare + run a program
     "program",  # program(name, *, mode=COARSE, options=None, activity_task_queue=None, result=None)
-    "TemporalProgram",  # the reference type program() returns (run / bind / start)
-    "run_program",  # low-level by-name standalone start (task_queue required)
+    "TemporalProgram",  # the reference type program() returns (run / bind / start / start_nowait)
+    "run_program",  # low-level by-name standalone start, awaited (task_queue required)
+    "start_program_nowait",  # low-level by-name non-blocking start -> WorkflowHandle
     # worker / client wiring
     "build_worker",  # build_worker(client, *, task_queue, ...)
     "DSPyPlugin",

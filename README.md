@@ -302,6 +302,25 @@ and `start()` (standalone) both return your own type and dspy never leaks into c
 agent = dt.program("compose_qa", result=lambda p: Answer(text=str(p.answer)))
 ```
 
+**Start now, poll later.** `ref.start()` awaits the result. When a caller can't hold the
+connection open for the length of an LM run (a web request, a dashboard), use
+`ref.start_nowait(...)` instead: it returns a Temporal `WorkflowHandle` immediately. Drive
+`handle.describe()` / `await handle.result()` on your own schedule, and decode the result with
+`ref.result_of(handle)` — which re-applies the same `result` adapter, so you still get your
+typed value (just deferred). No hand-authored `@workflow.defn` needed; the program *is* the
+workflow.
+
+```python
+handle = await agent.start_nowait(client, task_queue="dspy-temporal", question="Why is the sky blue?")
+# ... return to the caller now; later (even another request — re-obtain the handle by id):
+handle = client.get_workflow_handle(handle.id)
+answer = await agent.result_of(handle)        # -> your Answer type (or a dspy.Prediction)
+```
+
+A thin client that never imported the program reference has the by-name pair
+`start_program_nowait(client, name, inputs, *, task_queue, mode=...)` (parallel to
+`run_program`) and `dspy_temporal.client.prediction_of(handle)`.
+
 **Dedicated activity pool.** `program(..., activity_task_queue="gpu-pool")` (or
 `agent.on_task_queue("gpu-pool")`) routes the LM-heavy activity to its own worker pool while
 your workflow stays on the cheap queue — in coarse mode the single program activity, in fine
@@ -458,8 +477,9 @@ Everything below is importable as `dt.X` (`import dspy_temporal as dt`).
 | Symbol | Summary |
 |---|---|
 | `program(name, *, mode=RunMode.COARSE, options=None, activity_task_queue=None, result=None)` | Declare an immutable program reference (pure: no registration, no I/O). |
-| `TemporalProgram` | The reference `program()` returns. `.bind(impl)` registers a builder/live module (worker-side); `.run(**inputs)` composes it in your workflow; `.start(client, *, task_queue, **inputs)` runs it standalone; `.with_options(...)` / `.on_task_queue(...)` return modified copies. |
-| `run_program(client, name, inputs, *, task_queue, workflow_id=None, options=None, mode=None)` | Low-level by-name start (a thin client must pass `mode`). |
+| `TemporalProgram` | The reference `program()` returns. `.bind(impl)` registers a builder/live module (worker-side); `.run(**inputs)` composes it in your workflow; `.start(client, *, task_queue, **inputs)` runs it standalone and awaits; `.start_nowait(...)` runs it standalone and returns a `WorkflowHandle` (decode later with `.result_of(handle)`); `.with_options(...)` / `.on_task_queue(...)` return modified copies. |
+| `run_program(client, name, inputs, *, task_queue, workflow_id=None, options=None, mode=None)` | Low-level by-name start, awaited (a thin client must pass `mode`). |
+| `start_program_nowait(client, name, inputs, *, task_queue, workflow_id=None, options=None, mode=None)` | Low-level by-name non-blocking start → `WorkflowHandle`; decode with `dspy_temporal.client.prediction_of(handle)`. |
 | `build_worker(client, *, task_queue, max_concurrent_activities=100, extra_workflows=(), extra_passthrough_modules=(), **worker_kwargs)` | Build a `Worker` serving all bound programs. |
 | `DSPyPlugin(...)` | Client+worker plugin to wire DSPy into a `Worker` you build yourself. |
 | `connect(address, **kwargs)` | Connect a Temporal `Client` with the pydantic data converter installed. |
