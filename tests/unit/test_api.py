@@ -1,10 +1,12 @@
 """Tests for the declare/bind API: program() + the TemporalProgram reference, the
-standalone run_program client helper, and the ref's .start().
+standalone run_program / start_program_nowait client helpers, and the ref's
+.start() / .start_nowait() / .result_of().
 
-`run_program` and `ref.start` are covered against a fake client (records the call)
-so no Temporal server is needed; an end-to-end `ref.start` lives in the integration
-suite. `.run`'s in-workflow dispatch is covered by monkeypatching the execute_*
-coroutines; its outside-a-workflow degrade runs a real local DSPy call.
+The client helpers are covered against a fake client (records the call, hands back
+a fake handle) so no Temporal server is needed; an end-to-end `ref.start` /
+`ref.start_nowait` lives in the integration suite. `.run`'s in-workflow dispatch is
+covered by monkeypatching the execute_* coroutines; its outside-a-workflow degrade
+runs a real local DSPy call.
 """
 
 import dataclasses
@@ -15,6 +17,7 @@ import pytest
 from pydantic import BaseModel, field_validator
 
 import dspy_temporal as dt
+from dspy_temporal.client import prediction_of
 from dspy_temporal.coarse import api as api_mod
 from dspy_temporal.coarse.api import TemporalProgram
 from dspy_temporal.coarse.workflow import DSPyProgramWorkflow
@@ -24,17 +27,30 @@ from dspy_temporal.models import ProgramCallInput, ProgramCallOutput
 from dspy_temporal.registry import default_registry, register_program
 
 
+class FakeHandle:
+    """A stand-in WorkflowHandle whose result() returns a canned output."""
+
+    def __init__(self, output, *, workflow_id="wf-fake"):
+        self._output = output
+        self.id = workflow_id
+
+    async def result(self):
+        return self._output
+
+
 class FakeClient:
-    """Records the execute_workflow call and returns a canned output."""
+    """Records the start_workflow call and returns a handle over a canned output."""
 
     def __init__(self):
         self.calls = []
 
-    async def execute_workflow(self, run, call, *, id, task_queue):
+    async def start_workflow(self, run, call, *, id, task_queue, result_type=None):
         self.calls.append(
             {"run": run, "call": call, "id": id, "task_queue": task_queue}
         )
-        return ProgramCallOutput(prediction={"answer": "blue"})
+        return FakeHandle(
+            ProgramCallOutput(prediction={"answer": "blue"}), workflow_id=id
+        )
 
 
 # --- program(): a pure, immutable reference ----------------------------------
@@ -183,6 +199,52 @@ async def test_run_program_selects_fine_workflow_for_fine_mode():
     assert client.calls[0]["run"] == DSPyProgramFineWorkflow.run
 
 
+# --- start_program_nowait / prediction_of (by-name non-blocking path) ---------
+
+
+@pytest.mark.asyncio
+async def test_start_program_nowait_returns_handle_and_records_call():
+    client = FakeClient()
+
+    handle = await dt.start_program_nowait(
+        client, "qa", {"question": "sky?"}, task_queue="tq", mode=RunMode.COARSE
+    )
+
+    # Returns the handle itself, not the awaited result.
+    assert isinstance(handle, FakeHandle)
+    call = client.calls[0]
+    assert re.fullmatch(r"dspy-qa-[0-9a-f]{12}", call["id"])
+    assert call["task_queue"] == "tq"
+    assert isinstance(call["call"], ProgramCallInput)
+    assert call["run"] == DSPyProgramWorkflow.run
+
+
+@pytest.mark.asyncio
+async def test_start_program_nowait_selects_fine_workflow_for_fine_mode():
+    client = FakeClient()
+    await dt.start_program_nowait(
+        client, "qa", {"question": "sky?"}, task_queue="tq", mode=RunMode.FINE
+    )
+    assert client.calls[0]["run"] == DSPyProgramFineWorkflow.run
+
+
+@pytest.mark.asyncio
+async def test_prediction_of_from_typed_output():
+    """A handle whose result() yields a ProgramCallOutput decodes straight back."""
+    handle = FakeHandle(ProgramCallOutput(prediction={"answer": "blue"}))
+    pred = await prediction_of(handle)
+    assert pred.answer == "blue"
+
+
+@pytest.mark.asyncio
+async def test_prediction_of_from_raw_dict():
+    """A handle re-obtained via get_workflow_handle(id) carries no result type, so
+    result() hands back the raw decoded dict -- prediction_of validates it."""
+    handle = FakeHandle({"prediction": {"answer": "blue"}, "lm_usage": None})
+    pred = await prediction_of(handle)
+    assert pred.answer == "blue"
+
+
 # --- ref.start: standalone start using the ref's mode + an explicit queue -----
 
 
@@ -284,6 +346,110 @@ async def test_start_input_named_client_is_not_swallowed():
 
     call = client.calls[0]
     assert call["call"].inputs == {"client": "acme-corp", "question": "sky?"}
+
+
+# --- ref.start_nowait / ref.result_of: non-blocking start + deferred decode ---
+
+
+@pytest.mark.asyncio
+async def test_start_nowait_returns_handle_without_result_adapter():
+    """start_nowait hands back the raw handle -- the result isn't ready, so the
+    ref's result adapter is NOT applied here (result_of applies it later)."""
+    client = FakeClient()
+    ref = dt.program("qa", result=lambda p: _Answer(answer=p.answer))
+
+    handle = await ref.start_nowait(client, task_queue="tq-start", question="sky?")
+
+    assert isinstance(handle, FakeHandle)  # not an _Answer
+    call = client.calls[0]
+    assert call["task_queue"] == "tq-start"
+    assert re.fullmatch(r"dspy-qa-[0-9a-f]{12}", call["id"])
+    assert call["call"].program == "qa"
+    assert call["run"] != DSPyProgramFineWorkflow.run  # coarse ref -> coarse workflow
+
+
+@pytest.mark.asyncio
+async def test_start_nowait_requires_task_queue():
+    """task_queue is a required keyword on start_nowait too: omitting it is a
+    TypeError, not a start against a surprise default queue."""
+    client = FakeClient()
+    ref = dt.program("qa")
+    with pytest.raises(TypeError):
+        await ref.start_nowait(client, question="sky?")
+
+
+@pytest.mark.asyncio
+async def test_start_nowait_selects_fine_workflow_from_ref_mode():
+    client = FakeClient()
+    ref = dt.program("qa", mode=RunMode.FINE)
+
+    await ref.start_nowait(client, task_queue="tq", question="sky?")
+
+    assert client.calls[0]["run"] == DSPyProgramFineWorkflow.run
+
+
+@pytest.mark.asyncio
+async def test_start_nowait_uses_ref_default_options():
+    """A ref-level ``options`` default is honored on the start_nowait path too."""
+    client = FakeClient()
+    ref = dt.program("qa", options=CallOptions(maximum_attempts=5))
+
+    await ref.start_nowait(client, task_queue="tq", question="sky?")
+
+    assert client.calls[0]["call"].options.maximum_attempts == 5
+
+
+@pytest.mark.asyncio
+async def test_start_nowait_options_arg_overrides_ref_default():
+    client = FakeClient()
+    ref = dt.program("qa", options=CallOptions(maximum_attempts=5))
+
+    await ref.start_nowait(
+        client,
+        task_queue="tq",
+        question="sky?",
+        options=CallOptions(maximum_attempts=9),
+    )
+
+    assert client.calls[0]["call"].options.maximum_attempts == 9
+
+
+@pytest.mark.asyncio
+async def test_start_nowait_input_named_client_is_not_swallowed():
+    """``client`` is positional-only on start_nowait too, so an input field named
+    ``client`` is forwarded as an input."""
+    client = FakeClient()
+    ref = dt.program("qa")
+
+    await ref.start_nowait(client, task_queue="tq", client="acme-corp", question="sky?")
+
+    assert client.calls[0]["call"].inputs == {"client": "acme-corp", "question": "sky?"}
+
+
+@pytest.mark.asyncio
+async def test_result_of_applies_result_adapter():
+    """result_of re-applies the ref's adapter, so a polled handle yields the ref's
+    typed value (same contract as start(), deferred to poll time)."""
+    client = FakeClient()
+    ref = dt.program("qa", result=lambda p: _Answer(answer=p.answer))
+
+    handle = await ref.start_nowait(client, task_queue="tq", question="sky?")
+    out = await ref.result_of(handle)
+
+    assert isinstance(out, _Answer)
+    assert out.answer == "blue"
+
+
+@pytest.mark.asyncio
+async def test_result_of_without_adapter_returns_prediction():
+    client = FakeClient()
+    ref = dt.program("qa")
+
+    handle = await ref.start_nowait(client, task_queue="tq", question="sky?")
+    out = await ref.result_of(handle)
+
+    assert isinstance(out, dspy.Prediction)
+    assert out.answer == "blue"
 
 
 # --- .run: context-aware dispatch -------------------------------------------

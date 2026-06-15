@@ -20,7 +20,12 @@ The reference is the single source of truth for *how* the program runs:
   local DSPy call. When ``result`` is set, the returned ``dspy.Prediction`` is
   passed through that adapter so workflow code speaks the typed model, not dspy.
 - ``await ref.start(client, *, task_queue=..., **inputs)`` -- start the program as
-  a standalone workflow from a client (the by-name escape hatch ``run_program``).
+  a standalone workflow from a client and await its result (the by-name escape
+  hatch ``run_program``).
+- ``await ref.start_nowait(client, *, task_queue=..., **inputs)`` -- start it but
+  return the :class:`WorkflowHandle` immediately (start now, poll later), then
+  decode the result with ``ref.result_of(handle)`` (by-name: ``start_program_nowait``
+  + ``prediction_of``).
 
 Per-call tweaks use fluent, copy-returning helpers so ``run(**inputs)`` stays pure
 inputs: ``ref.with_options(CallOptions(...))`` and ``ref.on_task_queue("gpu")``
@@ -34,8 +39,9 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from temporalio import workflow
+from temporalio.client import WorkflowHandle
 
-from ..client import run_program
+from ..client import prediction_of, run_program, start_program_nowait
 from ..config import RunMode, run_program_async_or_sync
 from ..execute import execute_coarse, execute_fine
 from ..options import CallOptions
@@ -171,6 +177,59 @@ class TemporalProgram:
             options=options if options is not None else self.options,
             mode=self.mode,
         )
+        return self.result(pred) if self.result is not None else pred
+
+    async def start_nowait(
+        self,
+        client,
+        /,
+        *,
+        task_queue: str,
+        workflow_id: str | None = None,
+        options: CallOptions | None = None,
+        **inputs,
+    ) -> WorkflowHandle:
+        """Start this program as a standalone workflow and return its handle now.
+
+        The non-blocking sibling of :meth:`start`: same mode (this ref's),
+        same required ``task_queue``, same ``options`` defaulting and input/kwarg
+        rules -- but it returns the Temporal :class:`WorkflowHandle` immediately
+        instead of awaiting the result. The caller drives ``handle.describe()`` /
+        ``await handle.result()`` on its own schedule (the start-now / poll-later
+        shape a web request or dashboard wants). Delegates to
+        :func:`dspy_temporal.start_program_nowait`.
+
+        The ref's ``result`` adapter is **not** applied here -- the result isn't
+        ready yet. Decode the handle's result later with :meth:`result_of`, which
+        re-applies it (so the typed-output guarantee still holds, just deferred).
+
+        Program inputs are passed as keywords (``ref.start_nowait(client,
+        task_queue=q, question=...)``). ``client`` is positional-only so an input
+        field may be named ``client``; ``task_queue`` / ``workflow_id`` /
+        ``options`` are reserved control knobs, so a program needing inputs by
+        those names must use :func:`dspy_temporal.start_program_nowait` (it takes
+        inputs as an explicit dict).
+        """
+        return await start_program_nowait(
+            client,
+            self.name,
+            inputs,
+            task_queue=task_queue,
+            workflow_id=workflow_id,
+            options=options if options is not None else self.options,
+            mode=self.mode,
+        )
+
+    async def result_of(self, handle: WorkflowHandle) -> Any:
+        """Decode a handle from :meth:`start_nowait` into this ref's typed result.
+
+        Awaits the handle, rebuilds the ``dspy.Prediction`` from the workflow's
+        wire result, and -- when ``self.result`` is set -- passes it through that
+        adapter. Same typed-output contract as :meth:`start`, deferred to poll
+        time. Works on any handle for this program, including one re-obtained
+        across requests via ``client.get_workflow_handle(workflow_id)``.
+        """
+        pred = await prediction_of(handle)
         return self.result(pred) if self.result is not None else pred
 
 
