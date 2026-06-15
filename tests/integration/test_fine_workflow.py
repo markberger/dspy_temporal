@@ -103,11 +103,8 @@ async def test_fine_chain_of_thought_end_to_end(dummy_lm):
     only happens if WorkflowLM fed the usage tracker from the activity result.
     """
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
-    dt.deploy(
-        lambda: dspy.ChainOfThought("question -> answer"),
-        name="qa_fine",
-        task_queue=task_queue,
-        mode=dt.RunMode.FINE,
+    dt.program("qa_fine", mode=dt.RunMode.FINE).bind(
+        lambda: dspy.ChainOfThought("question -> answer")
     )
     dt.set_worker_lm(dummy_lm)
 
@@ -137,12 +134,7 @@ async def test_fine_per_predictor_multi_lm(dummy_lm):
     worker default, the bound one uses its own LM -- visible as two distinct
     model keys in lm_usage (two separate dspy_lm_call activities)."""
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
-    dt.deploy(
-        _TwoStage,
-        name="two_stage",
-        task_queue=task_queue,
-        mode=dt.RunMode.FINE,
-    )
+    dt.program("two_stage", mode=dt.RunMode.FINE).bind(_TwoStage)
     dt.set_worker_lm(_NamedDummyLM("model-fast", [{"topic": "weather"}] * 5))
 
     async with await WorkflowEnvironment.start_time_skipping(
@@ -173,12 +165,7 @@ async def test_fine_compiled_submodule_predictor_routes_through_activity():
     real LM executing inside the workflow sandbox. Guards the all_named_predictors
     fix end-to-end -- with plain named_predictors() this predictor is invisible."""
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
-    dt.deploy(
-        _OuterWithCompiled,
-        name="compiled_inner",
-        task_queue=task_queue,
-        mode=dt.RunMode.FINE,
-    )
+    dt.program("compiled_inner", mode=dt.RunMode.FINE).bind(_OuterWithCompiled)
     # A distinct worker default so we can prove the *bound* (compiled) LM ran,
     # not the fallback.
     dt.set_worker_lm(_NamedDummyLM("model-default", [{"answer": "red"}] * 5))
@@ -211,11 +198,8 @@ async def test_fine_json_adapter_structured_output():
     parses back -- the ChatAdapter-only limitation is lifted."""
     _RF_SEEN.clear()
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
-    dt.deploy(
-        lambda: dspy.Predict("question -> answer"),
-        name="qa_json",
-        task_queue=task_queue,
-        mode=dt.RunMode.FINE,
+    dt.program("qa_json", mode=dt.RunMode.FINE).bind(
+        lambda: dspy.Predict("question -> answer")
     )
     # Worker LM claims response_format support and emits JSON-formatted answers.
     dt.set_worker_lm(

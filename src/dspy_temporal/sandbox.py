@@ -20,14 +20,20 @@ from temporalio.worker.workflow_sandbox import (
 # inherits the client's TracingInterceptor whose workflow-side component imports
 # OTel inside the sandbox; it is otherwise unused in workflow code.
 #
-# `dspy_temporal.registry` is passed through because the fine workflow reads the
-# host's program registry *in workflow code* (default_registry().build(...)) to
-# reconstruct the module it orchestrates. It must share the host's
-# _DEFAULT_REGISTRY -- a sandbox reload would build an empty one, and the
-# workflow's own imports_passed_through() block is too late: importing the
-# dspy_temporal package re-runs __init__, which imports .registry fresh before
-# that block runs. Pinning it here makes the sandbox importer reuse the host
-# module on *every* import, regardless of ordering.
+# The whole `dspy_temporal` package is passed through (by prefix) for two reasons:
+#
+#  1. The fine workflow reads the host's program registry *in workflow code*
+#     (default_registry().build(...)) to reconstruct the module it orchestrates, so
+#     `dspy_temporal.registry` must share the host's _DEFAULT_REGISTRY -- a sandbox
+#     reload would build an empty one.
+#  2. A user's `@workflow.defn` declares its program with a `dt.program(...)`
+#     reference imported from a side-effect-free module (e.g. `from .refs import
+#     classifier`). That import transitively runs `import dspy_temporal`; pinning
+#     the package makes the sandbox reuse the already-imported host package instead
+#     of re-running `__init__` (and re-importing dspy/litellm/...) on every task --
+#     which is what lets the workflow file import the ref with a *plain* import, no
+#     `imports_passed_through()` dance. The user's own workflow module is not under
+#     this prefix, so it stays fully sandboxed.
 PASSTHROUGH_MODULES = (
     "dspy",
     "litellm",
@@ -37,7 +43,7 @@ PASSTHROUGH_MODULES = (
     "tiktoken",
     "tokenizers",
     "opentelemetry",
-    "dspy_temporal.registry",
+    "dspy_temporal",
 )
 
 

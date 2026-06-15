@@ -1,16 +1,18 @@
-"""Tests for the auto-wrap API: deploy + the TemporalProgram handle, the
-standalone run_program client helper, and the handle's .start().
+"""Tests for the declare/bind API: program() + the TemporalProgram reference, the
+standalone run_program client helper, and the ref's .start().
 
-`run_program` and `handle.start` are covered against a fake client (records the
-call) so no Temporal server is needed; an end-to-end `handle.start` lives in the
-integration suite. `.run`'s in-workflow dispatch is covered by monkeypatching the
-execute_* coroutines; its outside-a-workflow degrade runs a real local DSPy call.
+`run_program` and `ref.start` are covered against a fake client (records the call)
+so no Temporal server is needed; an end-to-end `ref.start` lives in the integration
+suite. `.run`'s in-workflow dispatch is covered by monkeypatching the execute_*
+coroutines; its outside-a-workflow degrade runs a real local DSPy call.
 """
 
+import dataclasses
 import re
 
 import dspy
 import pytest
+from pydantic import BaseModel, field_validator
 
 import dspy_temporal as dt
 from dspy_temporal.coarse import api as api_mod
@@ -35,57 +37,102 @@ class FakeClient:
         return ProgramCallOutput(prediction={"answer": "blue"})
 
 
-# --- deploy ------------------------------------------------------------------
+# --- program(): a pure, immutable reference ----------------------------------
 
 
-def test_deploy_builder_registers_and_returns_handle():
-    handle = dt.deploy(lambda: dspy.Predict("q -> a"), name="qa2", task_queue="tq2")
-    assert isinstance(handle, TemporalProgram)
-    assert handle.name == "qa2"
-    assert "qa2" in default_registry()
-    # mode defaults to coarse; task_queue is carried verbatim on the handle.
-    assert handle.mode == RunMode.COARSE
-    assert handle.task_queue == "tq2"
-
-
-def test_deploy_with_instance_registers_and_returns_handle():
-    handle = dt.deploy(
-        dspy.ChainOfThought("question -> answer"),
-        name="inst",
-        task_queue="tq-inst",
+def test_program_is_pure_and_returns_immutable_ref():
+    ref = dt.program(
+        "pure1",
         mode=RunMode.FINE,
+        options=CallOptions(maximum_attempts=7),
+        activity_task_queue="gpu",
     )
-    assert isinstance(handle, TemporalProgram)
-    assert "inst" in default_registry()
-    # mode + task_queue are carried on the handle (the single source of truth).
-    assert handle.mode == RunMode.FINE
-    assert handle.task_queue == "tq-inst"
+    assert isinstance(ref, TemporalProgram)
+    assert ref.name == "pure1"
+    assert ref.mode == RunMode.FINE
+    assert ref.options.maximum_attempts == 7
+    assert ref.activity_task_queue == "gpu"
+    # Declaration mutates nothing: no registry entry until bind().
+    assert "pure1" not in default_registry()
+
+
+def test_program_defaults():
+    ref = dt.program("pure2")
+    assert ref.mode == RunMode.COARSE
+    assert ref.options is None
+    assert ref.activity_task_queue is None
+    assert ref.result is None
+
+
+def test_ref_is_frozen():
+    ref = dt.program("fz")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        ref.name = "other"
+
+
+def test_with_options_returns_modified_copy():
+    ref = dt.program("wo", mode=RunMode.FINE)
+    ref2 = ref.with_options(CallOptions(maximum_attempts=9))
+
+    assert ref2 is not ref
+    assert ref2.options.maximum_attempts == 9
+    assert ref.options is None  # original untouched
+    # All other fields are preserved by the copy.
+    assert ref2.name == "wo"
+    assert ref2.mode == RunMode.FINE
+
+
+def test_on_task_queue_returns_modified_copy():
+    ref = dt.program("otq")
+    ref2 = ref.on_task_queue("gpu-pool")
+
+    assert ref2 is not ref
+    assert ref2.activity_task_queue == "gpu-pool"
+    assert ref.activity_task_queue is None  # original untouched
+
+
+# --- bind(): the heavy, side-effecting registration --------------------------
+
+
+def test_bind_registers_and_returns_self():
+    ref = dt.program("b1")
+    out = ref.bind(lambda: dspy.Predict("q -> a"))
+    assert out is ref  # chainable
+    assert "b1" in default_registry()
+
+
+def test_bind_with_instance_strips_lm_and_records_mode():
+    ref = dt.program("b2", mode=RunMode.FINE)
+    ref.bind(dspy.ChainOfThought("question -> answer"))
+
+    assert default_registry().mode_for("b2") == RunMode.FINE
     # The registered prototype builds an LM-stripped copy.
-    built = default_registry().build("inst")
+    built = default_registry().build("b2")
     assert all(p.lm is None for _n, p in built.named_predictors())
 
 
-def test_deploy_requires_task_queue():
-    # task_queue is a required keyword: omitting it is a TypeError, never a run
-    # against a surprise default queue.
-    with pytest.raises(TypeError):
-        dt.deploy(lambda: dspy.Predict("q -> a"), name="no_tq")
+def test_bind_same_object_is_noop_different_raises():
+    def builder():
+        return dspy.Predict("q -> a")
+
+    dt.program("b3").bind(builder)
+    dt.program("b3").bind(builder)  # same object -> no-op
+    with pytest.raises(ValueError, match=r"already registered to a different object"):
+        dt.program("b3").bind(lambda: dspy.Predict("q -> a"))  # different -> conflict
 
 
-def test_deploy_refused_in_sandbox(monkeypatch):
-    """deploy() funnels through register_program, so it inherits the sandbox
-    guardrail: a top-level deploy() in a workflow file (which the sandbox re-execs
-    each task) is refused with a RuntimeError pointing at the host-module split."""
+def test_bind_refused_in_sandbox(monkeypatch):
+    """bind() funnels through register_program, so it inherits the sandbox
+    guardrail: a top-level bind() in a workflow file (which the sandbox re-execs
+    each task) is refused with a RuntimeError pointing at the declare/bind split."""
     from dspy_temporal import registry as registry_mod
 
     monkeypatch.setattr(
         registry_mod.workflow.unsafe, "in_sandbox", lambda: True, raising=True
     )
     with pytest.raises(RuntimeError, match=r"sandbox"):
-        dt.deploy(
-            lambda: dspy.Predict("q -> a"), name="sandbox_deploy", task_queue="tq"
-        )
-    assert "sandbox_deploy" not in default_registry()
+        dt.program("sandbox_bind").bind(lambda: dspy.Predict("q -> a"))
+    assert "sandbox_bind" not in default_registry()
 
 
 # --- run_program (low-level by-name path) ------------------------------------
@@ -136,45 +183,60 @@ async def test_run_program_selects_fine_workflow_for_fine_mode():
     assert client.calls[0]["run"] == DSPyProgramFineWorkflow.run
 
 
-# --- handle.start: standalone start using the handle's own mode + queue ------
+# --- ref.start: standalone start using the ref's mode + an explicit queue -----
 
 
 @pytest.mark.asyncio
-async def test_start_uses_handle_queue_and_default_workflow_id():
+async def test_start_uses_passed_queue_and_default_workflow_id():
     client = FakeClient()
-    handle = TemporalProgram(name="qa", task_queue="tq-handle")
+    ref = dt.program("qa")
 
-    pred = await handle.start(client, question="sky?")
+    pred = await ref.start(client, task_queue="tq-start", question="sky?")
 
     assert pred.answer == "blue"
     call = client.calls[0]
-    # The handle is authoritative for the queue -- the caller never re-passes it.
-    assert call["task_queue"] == "tq-handle"
+    assert call["task_queue"] == "tq-start"
     assert re.fullmatch(r"dspy-qa-[0-9a-f]{12}", call["id"])
     assert isinstance(call["call"], ProgramCallInput)
     assert call["call"].program == "qa"
-    # Coarse handle -> coarse workflow.
+    # Coarse ref -> coarse workflow.
     assert call["run"] != DSPyProgramFineWorkflow.run
 
 
 @pytest.mark.asyncio
-async def test_start_selects_fine_workflow_from_handle_mode():
+async def test_start_requires_task_queue():
+    """task_queue is a required keyword on start(): omitting it is a TypeError, not
+    a run against a surprise default queue."""
     client = FakeClient()
-    handle = TemporalProgram(name="qa", task_queue="tq", mode=RunMode.FINE)
+    ref = dt.program("qa")
+    with pytest.raises(TypeError):
+        await ref.start(client, question="sky?")
 
-    await handle.start(client, question="sky?")
 
-    # The handle's own mode picks the workflow -- no mode re-pass at the call.
+@pytest.mark.asyncio
+async def test_start_selects_fine_workflow_from_ref_mode():
+    client = FakeClient()
+    ref = dt.program("qa", mode=RunMode.FINE)
+
+    await ref.start(client, task_queue="tq", question="sky?")
+
+    # The ref's own mode picks the workflow -- no mode re-pass at the call.
     assert client.calls[0]["run"] == DSPyProgramFineWorkflow.run
 
 
 @pytest.mark.asyncio
 async def test_start_honors_workflow_id_and_options_overrides():
     client = FakeClient()
-    handle = TemporalProgram(name="qa", task_queue="tq")
+    ref = dt.program("qa")
     opts = CallOptions(maximum_attempts=9)
 
-    await handle.start(client, question="sky?", workflow_id="wf-explicit", options=opts)
+    await ref.start(
+        client,
+        task_queue="tq",
+        question="sky?",
+        workflow_id="wf-explicit",
+        options=opts,
+    )
 
     call = client.calls[0]
     assert call["id"] == "wf-explicit"
@@ -182,13 +244,43 @@ async def test_start_honors_workflow_id_and_options_overrides():
 
 
 @pytest.mark.asyncio
+async def test_start_uses_ref_default_options():
+    """A ref-level ``options`` default (``program(..., options=...)``) is honored on
+    the start path -- the program's declared timeout/retry, not CallOptions()
+    defaults, reaches the standalone workflow when ``start`` omits ``options``."""
+    client = FakeClient()
+    ref = dt.program("qa", options=CallOptions(maximum_attempts=5))
+
+    await ref.start(client, task_queue="tq", question="sky?")
+
+    assert client.calls[0]["call"].options.maximum_attempts == 5
+
+
+@pytest.mark.asyncio
+async def test_start_options_arg_overrides_ref_default():
+    """An explicit ``options`` on ``start`` overrides the ref-level default for
+    that one start."""
+    client = FakeClient()
+    ref = dt.program("qa", options=CallOptions(maximum_attempts=5))
+
+    await ref.start(
+        client,
+        task_queue="tq",
+        question="sky?",
+        options=CallOptions(maximum_attempts=9),
+    )
+
+    assert client.calls[0]["call"].options.maximum_attempts == 9
+
+
+@pytest.mark.asyncio
 async def test_start_input_named_client_is_not_swallowed():
     """``client`` is positional-only, so a program input field literally named
     ``client`` is forwarded as an input, not bound to start's own parameter."""
     client = FakeClient()
-    handle = TemporalProgram(name="qa", task_queue="tq")
+    ref = dt.program("qa")
 
-    await handle.start(client, client="acme-corp", question="sky?")
+    await ref.start(client, task_queue="tq", client="acme-corp", question="sky?")
 
     call = client.calls[0]
     assert call["call"].inputs == {"client": "acme-corp", "question": "sky?"}
@@ -201,75 +293,174 @@ async def test_start_input_named_client_is_not_swallowed():
 async def test_run_in_workflow_coarse_dispatches_execute_coarse(monkeypatch):
     recorded = {}
 
-    async def fake_execute_coarse(name, inputs, options):
+    async def fake_execute_coarse(name, inputs, options, *, task_queue=None):
         recorded["name"] = name
         recorded["inputs"] = inputs
         recorded["options"] = options
+        recorded["task_queue"] = task_queue
         return dspy.Prediction(answer="from_coarse")
 
     monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: True)
     monkeypatch.setattr(api_mod, "execute_coarse", fake_execute_coarse)
     monkeypatch.setattr(api_mod, "execute_fine", _should_not_call)
 
-    handle = TemporalProgram(name="qa", task_queue="tq", mode=RunMode.COARSE)
-    pred = await handle.run(question="sky?")
+    ref = dt.program("qa", mode=RunMode.COARSE)
+    pred = await ref.run(question="sky?")
 
     assert pred.answer == "from_coarse"
     assert recorded["name"] == "qa"
     assert recorded["inputs"] == {"question": "sky?"}
-    # The context-aware path carries no per-handle options.
+    # A bare ref carries no options and co-locates the activity (no task_queue).
     assert recorded["options"] is None
+    assert recorded["task_queue"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_in_workflow_coarse_forwards_options_and_task_queue(monkeypatch):
+    recorded = {}
+
+    async def fake_execute_coarse(name, inputs, options, *, task_queue=None):
+        recorded["options"] = options
+        recorded["task_queue"] = task_queue
+        return dspy.Prediction(answer="ok")
+
+    monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: True)
+    monkeypatch.setattr(api_mod, "execute_coarse", fake_execute_coarse)
+    monkeypatch.setattr(api_mod, "execute_fine", _should_not_call)
+
+    opts = CallOptions(maximum_attempts=5)
+    ref = dt.program("qa", options=opts).on_task_queue("gpu-pool")
+    await ref.run(question="sky?")
+
+    assert recorded["options"] is opts
+    assert recorded["task_queue"] == "gpu-pool"
 
 
 @pytest.mark.asyncio
 async def test_run_in_workflow_fine_dispatches_execute_fine(monkeypatch):
     recorded = {}
 
-    async def fake_execute_fine(name, inputs, options):
+    async def fake_execute_fine(name, inputs, options, *, task_queue=None):
         recorded["name"] = name
+        recorded["options"] = options
+        recorded["task_queue"] = task_queue
         return dspy.Prediction(answer="from_fine")
 
     monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: True)
     monkeypatch.setattr(api_mod, "execute_fine", fake_execute_fine)
     monkeypatch.setattr(api_mod, "execute_coarse", _should_not_call)
 
-    handle = TemporalProgram(name="qa", task_queue="tq", mode=RunMode.FINE)
-    pred = await handle.run(question="sky?")
+    opts = CallOptions(maximum_attempts=4)
+    ref = dt.program("qa", mode=RunMode.FINE, options=opts)
+    pred = await ref.run(question="sky?")
 
     assert pred.answer == "from_fine"
     assert recorded["name"] == "qa"
+    assert recorded["options"] is opts
+    # A bare fine ref co-locates its per-call activities (no task_queue).
+    assert recorded["task_queue"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_in_workflow_fine_forwards_task_queue(monkeypatch):
+    """activity_task_queue routes fine mode too: execute_fine receives the queue so
+    every per-call activity lands on the dedicated pool (not a silent no-op)."""
+    recorded = {}
+
+    async def fake_execute_fine(name, inputs, options, *, task_queue=None):
+        recorded["task_queue"] = task_queue
+        return dspy.Prediction(answer="ok")
+
+    monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: True)
+    monkeypatch.setattr(api_mod, "execute_fine", fake_execute_fine)
+    monkeypatch.setattr(api_mod, "execute_coarse", _should_not_call)
+
+    ref = dt.program("qa", mode=RunMode.FINE).on_task_queue("gpu-pool")
+    await ref.run(question="sky?")
+
+    assert recorded["task_queue"] == "gpu-pool"
 
 
 @pytest.mark.asyncio
 async def test_run_outside_workflow_coarse_runs_in_process(monkeypatch, dummy_lm):
     monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: False)
-    dt.deploy(
-        lambda: dspy.ChainOfThought("question -> answer"),
-        name="degrade_coarse",
-        task_queue="tq",
-    )
+    ref = dt.program("degrade_coarse", mode=RunMode.COARSE)
+    ref.bind(lambda: dspy.ChainOfThought("question -> answer"))
 
-    handle = TemporalProgram(
-        name="degrade_coarse", task_queue="tq", mode=RunMode.COARSE
-    )
     with dspy.context(lm=dummy_lm):
-        pred = await handle.run(question="color of the sky?")
+        pred = await ref.run(question="color of the sky?")
     assert pred.answer == "blue"
 
 
 @pytest.mark.asyncio
 async def test_run_outside_workflow_fine_runs_in_process(monkeypatch, dummy_lm):
     monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: False)
-    dt.deploy(
-        lambda: dspy.ChainOfThought("question -> answer"),
-        name="degrade_fine",
-        task_queue="tq",
-    )
+    ref = dt.program("degrade_fine", mode=RunMode.FINE)
+    ref.bind(lambda: dspy.ChainOfThought("question -> answer"))
 
-    handle = TemporalProgram(name="degrade_fine", task_queue="tq", mode=RunMode.FINE)
     with dspy.context(lm=dummy_lm):
-        pred = await handle.run(question="color of the sky?")
+        pred = await ref.run(question="color of the sky?")
     assert pred.answer == "blue"
+
+
+# --- typed result adapter ----------------------------------------------------
+
+
+class _Answer(BaseModel):
+    answer: str
+    confidence: float = 0.0
+
+    @field_validator("confidence")
+    @classmethod
+    def _clamp(cls, v: float) -> float:
+        # Validation lives on the model, so the adapter stays a thin field-lift.
+        return max(0.0, min(1.0, v))
+
+
+@pytest.mark.asyncio
+async def test_run_applies_result_adapter_in_workflow(monkeypatch):
+    async def fake_execute_coarse(name, inputs, options, *, task_queue=None):
+        # Extra fields on the prediction (e.g. reasoning) are simply not lifted.
+        return dspy.Prediction(answer="blue", confidence=1.5, reasoning="ignored")
+
+    monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: True)
+    monkeypatch.setattr(api_mod, "execute_coarse", fake_execute_coarse)
+    monkeypatch.setattr(api_mod, "execute_fine", _should_not_call)
+
+    ref = dt.program(
+        "qa", result=lambda p: _Answer(answer=p.answer, confidence=p.confidence)
+    )
+    out = await ref.run(question="?")
+
+    assert isinstance(out, _Answer)
+    assert out.answer == "blue"
+    assert out.confidence == 1.0  # clamped by the model's field_validator
+
+
+@pytest.mark.asyncio
+async def test_run_applies_result_adapter_on_degrade_path(monkeypatch, dummy_lm):
+    monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: False)
+    ref = dt.program("res_degrade", result=lambda p: _Answer(answer=p.answer))
+    ref.bind(lambda: dspy.ChainOfThought("question -> answer"))
+
+    with dspy.context(lm=dummy_lm):
+        out = await ref.run(question="color of the sky?")
+
+    assert isinstance(out, _Answer)
+    assert out.answer == "blue"
+
+
+@pytest.mark.asyncio
+async def test_start_applies_result_adapter():
+    """The result adapter holds on the start path too -- a standalone start returns
+    the ref's typed value, not a raw dspy.Prediction (same contract as run())."""
+    client = FakeClient()
+    ref = dt.program("qa", result=lambda p: _Answer(answer=p.answer))
+
+    out = await ref.start(client, task_queue="tq", question="sky?")
+
+    assert isinstance(out, _Answer)
+    assert out.answer == "blue"
 
 
 async def _should_not_call(*args, **kwargs):  # pragma: no cover - guard
@@ -283,11 +474,9 @@ async def _should_not_call(*args, **kwargs):  # pragma: no cover - guard
 
 @pytest.mark.asyncio
 async def test_run_program_registered_with_mode_resolves_without_explicit():
-    """A name deployed FINE runs FINE when called by name with no explicit mode."""
+    """A name bound FINE runs FINE when called by name with no explicit mode."""
     client = FakeClient()
-    dt.deploy(
-        lambda: dspy.Predict("q -> a"), name="r29f", task_queue="tq", mode=RunMode.FINE
-    )
+    dt.program("r29f", mode=RunMode.FINE).bind(lambda: dspy.Predict("q -> a"))
     await dt.run_program(client, "r29f", {"question": "?"}, task_queue="tq")
     assert client.calls[0]["run"] == DSPyProgramFineWorkflow.run
 
@@ -296,12 +485,7 @@ async def test_run_program_registered_with_mode_resolves_without_explicit():
 async def test_run_program_registered_with_mode_explicit_equal_ok():
     """Passing the matching explicit mode is accepted (no conflict)."""
     client = FakeClient()
-    dt.deploy(
-        lambda: dspy.Predict("q -> a"),
-        name="r29e",
-        task_queue="tq",
-        mode=RunMode.COARSE,
-    )
+    dt.program("r29e", mode=RunMode.COARSE).bind(lambda: dspy.Predict("q -> a"))
     await dt.run_program(
         client, "r29e", {"question": "?"}, task_queue="tq", mode=RunMode.COARSE
     )
@@ -310,14 +494,9 @@ async def test_run_program_registered_with_mode_explicit_equal_ok():
 
 @pytest.mark.asyncio
 async def test_run_program_registered_with_mode_explicit_conflict_raises():
-    """Deployed COARSE but called with mode=FINE -> a clear conflict ValueError."""
+    """Bound COARSE but called with mode=FINE -> a clear conflict ValueError."""
     client = FakeClient()
-    dt.deploy(
-        lambda: dspy.Predict("q -> a"),
-        name="r29c",
-        task_queue="tq",
-        mode=RunMode.COARSE,
-    )
+    dt.program("r29c", mode=RunMode.COARSE).bind(lambda: dspy.Predict("q -> a"))
     with pytest.raises(ValueError, match=r"registered as mode='coarse'.*'fine'"):
         await dt.run_program(
             client, "r29c", {"question": "?"}, task_queue="tq", mode=RunMode.FINE
@@ -351,7 +530,7 @@ async def test_run_program_unregistered_requires_explicit_mode():
     """An unregistered name with no explicit mode is ambiguous -> ValueError."""
     client = FakeClient()
     with pytest.raises(ValueError, match=r"not registered in this process"):
-        await dt.run_program(client, "never_deployed", {"q": "?"}, task_queue="tq")
+        await dt.run_program(client, "never_bound", {"q": "?"}, task_queue="tq")
     assert client.calls == []
 
 
@@ -365,12 +544,7 @@ async def test_run_program_unregistered_with_explicit_mode_is_trusted():
     assert client.calls[0]["run"] == DSPyProgramWorkflow.run
 
 
-def test_deploy_records_mode_in_registry():
-    """deploy stores its mode in the registry (mode_for reads it back)."""
-    dt.deploy(
-        lambda: dspy.Predict("q -> a"),
-        name="r29dep",
-        task_queue="tq",
-        mode=RunMode.FINE,
-    )
+def test_bind_records_mode_in_registry():
+    """bind stores the ref's mode in the registry (mode_for reads it back)."""
+    dt.program("r29dep", mode=RunMode.FINE).bind(lambda: dspy.Predict("q -> a"))
     assert default_registry().mode_for("r29dep") == RunMode.FINE

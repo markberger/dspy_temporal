@@ -1,64 +1,64 @@
-"""Smoke test: the documented example imports and registers its program.
+"""Smoke test: the documented examples declare pure refs and bind cleanly.
 
 This guards the onboarding path shown in the README without needing a server.
+``dt.program(...)`` is pure -- importing an example registers nothing -- so these
+tests assert the declaration is side-effect-free and that the worker's explicit
+``ref.bind(impl)`` step registers it.
 """
 
 import importlib
 import sys
 from pathlib import Path
 
+import dspy
+
 from dspy_temporal.registry import default_registry
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples"
 
 
-def _import_example(module_name, *also_evict):
-    """Import an example module, forcing a *fresh* execution of its body.
-
-    Examples ``deploy``/``register_program`` at import time. Python caches a
-    module after its first import, so a plain ``import`` re-runs that body only
-    once per session -- but the autouse ``restore_registry`` fixture rolls each
-    test's registry back afterward. We evict the module first so its import-time
-    registration re-runs inside *this* test's snapshot window (and is asserted
-    present), then rolled back like any other. ``also_evict`` names any
-    side-effecting dependency module that must likewise re-run (e.g. a workflow
-    file's separate registration module).
-    """
+def _import_example(module_name):
+    """Import an example module with the examples dir on the path."""
     sys.path.insert(0, str(EXAMPLES_DIR))
     try:
-        for mod in (module_name, *also_evict):
-            sys.modules.pop(mod, None)
         return importlib.import_module(module_name)
     finally:
         sys.path.remove(str(EXAMPLES_DIR))
 
 
-def test_example_qa_program_registers():
+def test_example_qa_program_is_pure_then_binds():
     qa_program = _import_example("qa_program")
 
-    assert "qa" in default_registry()
+    # program() is pure: importing the declaration registers nothing.
+    assert "qa" not in default_registry()
     assert qa_program.qa.name == "qa"
-    assert qa_program.qa.task_queue == qa_program.TASK_QUEUE
+
+    # The worker's explicit bind step is what registers the implementation.
+    qa_program.qa.bind(qa_program.build_qa)
+    assert "qa" in default_registry()
 
 
-def test_example_deploy_instance_registers():
-    """deploy() wraps a live dspy.Module instance."""
-    deploy_instance = _import_example("deploy_instance")
+def test_example_instance_program_binds_live_instance():
+    """ref.bind() accepts a live dspy.Module instance (a compiled prototype)."""
+    instance_program = _import_example("instance_program")
 
+    assert "qa_instance" not in default_registry()
+    instance_program.qa_instance.bind(instance_program.prototype)
     assert "qa_instance" in default_registry()
-    assert deploy_instance.qa_instance.name == "qa_instance"
     # The registered prototype builds an LM-stripped copy.
     built = default_registry().build("qa_instance")
     assert all(p.lm is None for _n, p in built.named_predictors())
 
 
-def test_example_compose_program_registers():
-    """A user @workflow.defn composing agent.run()."""
-    # compose_program passthrough-imports its deploy from compose_agents; evict
-    # both so the registration re-runs in this test's snapshot window.
-    compose_program = _import_example("compose_program", "compose_agents")
+def test_example_compose_program_declares_workflow_and_ref():
+    """A user @workflow.defn composing triage_agent.run(), with a pure ref."""
+    compose_program = _import_example("compose_program")
 
-    assert "compose_qa" in default_registry()
+    # The ref is declared side-effect-free; binding is the worker's job.
+    assert "compose_qa" not in default_registry()
     assert compose_program.triage_agent.name == "compose_qa"
     # The composed workflow is a real @workflow.defn (has a run method).
     assert hasattr(compose_program.ResearchWorkflow, "run")
+
+    compose_program.triage_agent.bind(lambda: dspy.ChainOfThought("question -> answer"))
+    assert "compose_qa" in default_registry()

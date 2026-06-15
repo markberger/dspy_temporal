@@ -1,11 +1,11 @@
-"""dspy-temporal: deploy DSPy programs on Temporal as durable workflows."""
+"""dspy-temporal: run DSPy programs on Temporal as durable workflows."""
 
 from __future__ import annotations
 
 __version__ = "0.1.0"
 
 from .client import run_program
-from .coarse.api import TemporalProgram, deploy
+from .coarse.api import TemporalProgram, program
 from .config import (
     CallOptions,
     RunMode,
@@ -29,9 +29,9 @@ from .worker import build_worker
 #   - ``get_worker_lm`` / ``clear_worker_lm`` -> ``dspy_temporal.config``
 __all__ = [  # noqa: RUF022 -- grouped by concern, not alphabetized
     "__version__",
-    # deploy + run a program
-    "deploy",  # deploy(source, *, name, task_queue, mode=COARSE)
-    "TemporalProgram",  # handle type returned by deploy (run / start)
+    # declare + run a program
+    "program",  # program(name, *, mode=COARSE, options=None, activity_task_queue=None, result=None)
+    "TemporalProgram",  # the reference type program() returns (run / bind / start)
     "run_program",  # low-level by-name standalone start (task_queue required)
     # worker / client wiring
     "build_worker",  # build_worker(client, *, task_queue, ...)

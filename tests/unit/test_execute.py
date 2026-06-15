@@ -73,6 +73,9 @@ async def test_execute_coarse_builds_input_and_returns_prediction(dispatch):
     assert arg.options is None
     assert kwargs["start_to_close_timeout"] == CallOptions().start_to_close_timeout()
     assert kwargs["retry_policy"] is not None
+    # No activity_task_queue -> the activity co-locates with the workflow's queue,
+    # so task_queue is omitted from the dispatch (Temporal rejects task_queue=None).
+    assert "task_queue" not in kwargs
 
 
 @pytest.mark.asyncio
@@ -86,6 +89,17 @@ async def test_execute_coarse_honors_supplied_options(dispatch):
     _name, _arg, kwargs = dispatch["calls"][0]
     assert kwargs["start_to_close_timeout"] == opts.start_to_close_timeout()
     assert kwargs["retry_policy"].maximum_attempts == 7
+
+
+@pytest.mark.asyncio
+async def test_execute_coarse_routes_to_activity_task_queue(dispatch):
+    dispatch["responses"][ACTIVITY_NAME] = ProgramCallOutput(prediction={"answer": "x"})
+
+    # task_queue-supplied branch: the activity is routed to a dedicated queue.
+    await execute_coarse("qa", {"question": "sky?"}, task_queue="gpu-pool")
+
+    _name, _arg, kwargs = dispatch["calls"][0]
+    assert kwargs["task_queue"] == "gpu-pool"
 
 
 # --- execute_fine ------------------------------------------------------------

@@ -1,10 +1,16 @@
-"""End-to-end: a user @workflow.defn composes a deployed program.
+"""End-to-end: a user @workflow.defn composes a program reference.
 
-Proves ``await agent.run(**inputs)`` works *inside* a user-authored workflow:
-``TemporalProgram.run`` sees it is in a workflow and dispatches ``execute_coarse``
-(our program activity) inline. The user workflow (``ResearchWorkflow`` from
-examples/compose_program.py) chains two such calls across a ``workflow.sleep`` and
-is served on the same worker via ``build_worker(extra_workflows=[...])``.
+Proves ``await triage_agent.run(**inputs)`` works *inside* a user-authored
+workflow: ``TemporalProgram.run`` sees it is in a workflow and dispatches
+``execute_coarse`` (our program activity) inline. The user workflow
+(``ResearchWorkflow`` from examples/compose_program.py) chains two such calls
+across a ``workflow.sleep`` and is served on the same worker via
+``build_worker(extra_workflows=[...])``.
+
+The workflow file imports the program reference with a **plain import** (no
+``imports_passed_through()`` dance) -- the decoupling that makes "bring your own
+workflow" first-class -- and this test exercises exactly that path through the
+sandbox.
 """
 
 import importlib
@@ -12,6 +18,7 @@ import sys
 import uuid
 from pathlib import Path
 
+import dspy
 import pytest
 from temporalio.testing import WorkflowEnvironment
 
@@ -23,20 +30,21 @@ EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples"
 
 @pytest.fixture
 def compose_example():
-    """Import the compose example (registers "compose_qa" + ResearchWorkflow).
+    """Import the compose example and bind its program.
 
-    Forces a fresh execution of the module body (evicting it -- and the
-    ``compose_agents`` module it passthrough-imports its ``deploy`` from -- from
-    ``sys.modules`` first) so the import-time ``deploy`` re-runs inside this
-    test's registry-snapshot window -- the autouse ``restore_registry`` fixture
-    rolls back each test's registrations, so a once-per-session import would
-    leave "compose_qa" unregistered by the time this test runs.
+    ``compose_refs`` declares "compose_qa" with a side-effect-free
+    ``dt.program(...)``; binding the implementation is the worker's job. We do that
+    here (inside the test's registry-snapshot window, which the autouse
+    ``restore_registry`` fixture rolls back afterward) so the program activity can
+    build it. ``compose_program`` imports the ref with a plain import -- no
+    passthrough block -- so this also proves that import path is sandbox-safe.
     """
     sys.path.insert(0, str(EXAMPLES_DIR))
     try:
-        sys.modules.pop("compose_program", None)
-        sys.modules.pop("compose_agents", None)
         compose_program = importlib.import_module("compose_program")
+        compose_program.triage_agent.bind(
+            lambda: dspy.ChainOfThought("question -> answer")
+        )
         yield compose_program
     finally:
         sys.path.remove(str(EXAMPLES_DIR))
@@ -64,5 +72,6 @@ async def test_compose_agent_run_inside_user_workflow(compose_example, dummy_lm)
             )
 
     # Both composed agent.run() calls dispatched the coarse activity and the
-    # DummyLM's answer flowed back through the user workflow.
-    assert answer == "blue"
+    # DummyLM's answer flowed back through the user workflow, shaped by the ref's
+    # ``result`` adapter into a typed ``Answer``.
+    assert answer.text == "blue"

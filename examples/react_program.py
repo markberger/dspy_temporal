@@ -1,6 +1,6 @@
 """A fine-mode ReAct agent: each LM call and tool call is its own activity.
 
-Deploying with ``mode=RunMode.FINE`` makes the worker orchestrate the ReAct loop in
+Declaring with ``mode=RunMode.FINE`` makes the worker orchestrate the ReAct loop in
 the workflow and run every model call (and every ``get_weather`` call) as a
 separate, independently-retried Temporal activity. In the Temporal UI you'll see
 distinct ``dspy_lm_call`` / ``dspy_tool_call`` events; on a crash the run resumes
@@ -10,7 +10,8 @@ The tool function body runs in an activity, so it may do real I/O (here it just
 returns a string). The builder runs in the workflow, so it only *constructs*
 dspy objects -- no network/file/DB at build time.
 
-Imported by ``examples/worker.py`` so the builder registers at worker startup.
+The worker binds the builder at startup (``weather_agent.bind(build_weather_agent)``,
+see ``examples/worker.py``).
 """
 
 import dspy
@@ -33,9 +34,4 @@ def build_weather_agent() -> dspy.Module:
     return dspy.ReAct("question -> answer", tools=[get_weather])
 
 
-weather_agent = dt.deploy(
-    build_weather_agent,
-    name="weather_agent",
-    task_queue=TASK_QUEUE,
-    mode=dt.RunMode.FINE,
-)
+weather_agent = dt.program("weather_agent", mode=dt.RunMode.FINE)

@@ -19,19 +19,21 @@ Run:
 import asyncio
 import os
 
-# Importing these registers the program builders in the process registry:
-#   - qa_program       -> "qa" (coarse mode)
-#   - react_program    -> "weather_agent" (fine mode; per-LM/per-tool activities)
-#   - two_lm_program   -> "two_lm_qa" (fine mode; per-predictor multi-LM)
-#   - deploy_instance  -> "qa_instance" (a live dspy.Module instance)
-#   - compose_program  -> "compose_qa" + ResearchWorkflow (agent.run() in a
-#                         user-authored workflow, served via extra_workflows)
-import compose_program  # noqa: F401  (registers "compose_qa" + ResearchWorkflow)
-import deploy_instance  # noqa: F401  (registers "qa_instance")
-import react_program  # noqa: F401  (import registers "weather_agent")
-import two_lm_program  # noqa: F401  (import registers "two_lm_qa")
+import dspy
+
+# Each module declares a side-effect-free program reference (dt.program(...)); the
+# worker attaches the implementation below with ref.bind(impl). The refs:
+#   - qa             -> "qa" (coarse mode)
+#   - weather_agent  -> "weather_agent" (fine mode; per-LM/per-tool activities)
+#   - two_lm_qa      -> "two_lm_qa" (fine mode; per-predictor multi-LM)
+#   - qa_instance    -> "qa_instance" (a live dspy.Module instance)
+#   - triage_agent   -> "compose_qa", composed inside ResearchWorkflow
 from compose_program import ResearchWorkflow
-from qa_program import TASK_QUEUE
+from compose_refs import triage_agent
+from instance_program import prototype, qa_instance
+from qa_program import TASK_QUEUE, build_qa, qa
+from react_program import build_weather_agent, weather_agent
+from two_lm_program import TwoLMQA, two_lm_qa
 
 import dspy_temporal as dt
 
@@ -55,6 +57,15 @@ async def _connect_with_retry(address: str, *, interceptors, attempts: int = 30)
 async def main() -> None:
     # Configure the LM from the environment (worker-side only; never serialized).
     dt.configure_lm_from_env()
+
+    # Bind each declared program to its implementation. This is the heavy,
+    # side-effecting step (it populates the process registry) and belongs on the
+    # worker -- never in a workflow file.
+    qa.bind(build_qa)
+    weather_agent.bind(build_weather_agent)
+    two_lm_qa.bind(TwoLMQA)
+    qa_instance.bind(prototype)
+    triage_agent.bind(lambda: dspy.ChainOfThought("question -> answer"))
 
     interceptors: list = []
     if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):

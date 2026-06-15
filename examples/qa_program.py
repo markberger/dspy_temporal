@@ -1,7 +1,8 @@
-"""Shared program definition imported by both the worker and the starter.
+"""Shared program *declaration* imported by both the worker and the starter.
 
-Defining the program here (and importing this module from the worker) is how the
-worker's registry learns about the program builder.
+``dt.program(...)`` builds a pure reference -- no registry mutation, no model
+load. The worker attaches the implementation at startup with ``qa.bind(build_qa)``
+(see ``examples/worker.py``); the starter only needs the reference's name + mode.
 """
 
 import dspy
@@ -17,8 +18,4 @@ def build_qa() -> dspy.Module:
     return dspy.ChainOfThought("question -> answer")
 
 
-qa = dt.deploy(
-    build_qa,
-    name="qa",
-    task_queue=TASK_QUEUE,
-)
+qa = dt.program("qa", mode=dt.RunMode.COARSE)

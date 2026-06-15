@@ -34,14 +34,14 @@ async def run_program(
     """Start the program workflow, wait for it, and return a ``dspy.Prediction``.
 
     The low-level by-name escape hatch; ``TemporalProgram.start`` delegates here
-    and is the *primary* path (the handle carries mode + queue so they can't
+    and is the *primary* path (the ref carries mode + queue so they can't
     desync). ``task_queue`` is required (no default).
 
     The run ``mode`` is **resolved from the registry** (see
     :meth:`ProgramRegistry.resolve_mode`), not blindly trusted:
 
-    - If ``name`` was deployed in this process with a mode, that mode is used. A
-      conflicting explicit ``mode`` raises (use ``handle.start`` to avoid the
+    - If ``name`` was registered in this process with a mode, that mode is used. A
+      conflicting explicit ``mode`` raises (use ``ref.start`` to avoid the
       mismatch entirely, or pass the matching mode / omit it).
     - If ``name`` was registered *without* a mode (via the low-level
       ``register_program``), an explicit ``mode`` is required (none -> raises).

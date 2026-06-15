@@ -17,7 +17,7 @@ import asyncio
 import os
 import sys
 
-from qa_program import qa
+from qa_program import TASK_QUEUE, qa
 
 import dspy_temporal as dt
 
@@ -37,8 +37,8 @@ async def main() -> None:
 
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     client = await dt.connect(address, interceptors=interceptors)
-    # The handle carries its own task_queue + mode -- start it directly.
-    prediction = await qa.start(client, question=question)
+    # The ref carries its mode; pass the serving task_queue to start it standalone.
+    prediction = await qa.start(client, task_queue=TASK_QUEUE, question=question)
     print("Q:", question)
     print("A:", prediction.answer)
     if getattr(prediction, "reasoning", None):

@@ -32,7 +32,12 @@ class WorkflowTool(dspy.Tool):
     """A ``dspy.Tool`` whose call runs in a ``dspy_tool_call`` activity."""
 
     def __init__(
-        self, original: dspy.Tool, *, program: str, options: CallOptions | None = None
+        self,
+        original: dspy.Tool,
+        *,
+        program: str,
+        options: CallOptions | None = None,
+        task_queue: str | None = None,
     ):
         super().__init__(
             func=original.func,
@@ -45,6 +50,9 @@ class WorkflowTool(dspy.Tool):
         # activity rebuilds the program by name and looks the tool up there.
         self._program = program
         self._options = options or CallOptions()
+        # Route the dspy_tool_call activity to a dedicated queue (None co-locates
+        # it with the workflow's queue) -- the fine-mode half of activity_task_queue.
+        self._task_queue = task_queue
 
     async def acall(self, **kwargs: Any) -> Any:
         out = await workflow.execute_activity(
@@ -55,6 +63,6 @@ class WorkflowTool(dspy.Tool):
                 args=json_safe(kwargs),
             ),
             result_type=ToolCallOutput,
-            **self._options.activity_kwargs(),
+            **self._options.activity_kwargs(task_queue=self._task_queue),
         )
         return out.observation
