@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from temporalio import workflow
 
@@ -40,9 +40,6 @@ from ..config import RunMode, run_program_async_or_sync
 from ..execute import execute_coarse, execute_fine
 from ..options import CallOptions
 from ..registry import ModuleSource, default_registry, register_program
-
-if TYPE_CHECKING:
-    import dspy
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -61,14 +58,15 @@ class TemporalProgram:
     name: str
     mode: RunMode = RunMode.COARSE
     options: CallOptions | None = None
-    # Route the program activity to a dedicated queue (the "cheap workflow workers
-    # + dedicated activity pool" split). ``None`` co-locates it with the calling
-    # workflow's queue. Coarse mode only for now -- ignored in fine mode, whose
-    # per-call activities co-locate.
+    # Route the program's LM-heavy activity to a dedicated queue (the "cheap
+    # workflow workers + dedicated activity pool" split): in coarse mode the single
+    # program activity, in fine mode every per-call activity (the describe + each
+    # dspy_lm_call / dspy_tool_call). Honored on the ``run`` compose path; ``None``
+    # co-locates the activity with the calling workflow's queue.
     activity_task_queue: str | None = None
-    # Explicit ``dspy.Prediction -> T`` adapter. When set, :meth:`run` returns
-    # ``result(prediction)`` (typically a pydantic model), keeping dspy out of
-    # workflow code. When ``None``, ``run`` returns the raw ``Prediction``.
+    # Explicit ``dspy.Prediction -> T`` adapter. When set, :meth:`run` / :meth:`start`
+    # return ``result(prediction)`` (typically a pydantic model), keeping dspy out of
+    # caller code. When ``None``, they return the raw ``Prediction``.
     result: Callable[[Any], Any] | None = None
 
     def bind(self, impl: ModuleSource) -> TemporalProgram:
@@ -97,9 +95,10 @@ class TemporalProgram:
 
         Inside a workflow (a user's own ``@workflow.defn`` that awaits this) the
         call dispatches our activities inline via ``execute_coarse`` /
-        ``execute_fine``, carrying this ref's ``options`` and (coarse only)
-        ``activity_task_queue``. Outside any workflow it degrades to a plain
-        in-process DSPy call against the locally configured LM (no worker-LM
+        ``execute_fine``, carrying this ref's ``options`` and routing the activity
+        (coarse: the program activity; fine: every per-call activity) to
+        ``activity_task_queue`` when set. Outside any workflow it degrades to a
+        plain in-process DSPy call against the locally configured LM (no worker-LM
         injection -- ``start`` is the path that uses the worker).
 
         When ``self.result`` is set, the ``dspy.Prediction`` is passed through it
@@ -107,7 +106,12 @@ class TemporalProgram:
         """
         if workflow.in_workflow():
             if self.mode == RunMode.FINE:
-                pred = await execute_fine(self.name, inputs, self.options)
+                pred = await execute_fine(
+                    self.name,
+                    inputs,
+                    self.options,
+                    task_queue=self.activity_task_queue,
+                )
             else:
                 pred = await execute_coarse(
                     self.name,
@@ -135,7 +139,7 @@ class TemporalProgram:
         workflow_id: str | None = None,
         options: CallOptions | None = None,
         **inputs,
-    ) -> dspy.Prediction:
+    ) -> Any:
         """Start this program as a standalone workflow and await its result.
 
         Delegates to :func:`dspy_temporal.run_program` (the by-name escape hatch)
@@ -143,21 +147,31 @@ class TemporalProgram:
         about composing the program *inside your own workflow*; starting it as its
         own workflow needs an explicit serving queue.
 
+        ``options`` defaults to this ref's own ``options`` (the program's declared
+        timeout/retry), so ``program(name, options=...)`` is honored on the start
+        path too; pass ``options`` here to override it for this one start.
+
+        When ``self.result`` is set, the ``dspy.Prediction`` is passed through it
+        and the adapted value is returned (same contract as :meth:`run`), so the
+        ref's typed-output guarantee holds on both entry points; otherwise the raw
+        ``Prediction``.
+
         Program inputs are passed as keywords (``ref.start(client, task_queue=q,
         question=...)``). ``client`` is positional-only so an input field may be
         named ``client``; ``task_queue`` / ``workflow_id`` / ``options`` are
         reserved control knobs, so a program needing inputs by those names must use
         :func:`dspy_temporal.run_program` (it takes inputs as an explicit dict).
         """
-        return await run_program(
+        pred = await run_program(
             client,
             self.name,
             inputs,
             task_queue=task_queue,
             workflow_id=workflow_id,
-            options=options,
+            options=options if options is not None else self.options,
             mode=self.mode,
         )
+        return self.result(pred) if self.result is not None else pred
 
 
 def program(

@@ -55,6 +55,7 @@ class WorkflowLM(dspy.BaseLM):
         lm_ref: str | None = None,
         program: str | None = None,
         options: CallOptions | None = None,
+        task_queue: str | None = None,
     ):
         super().__init__(model=spec.model, model_type=spec.model_type)
         # Mirror the real LM's sampling kwargs so workflow-side config derivation
@@ -64,6 +65,9 @@ class WorkflowLM(dspy.BaseLM):
         self._lm_ref = lm_ref
         self._program = program
         self._options = options or CallOptions()
+        # Route the dspy_lm_call activity to a dedicated queue (None co-locates it
+        # with the workflow's queue) -- the fine-mode half of activity_task_queue.
+        self._task_queue = task_queue
 
     # Capability flags are setterless @property on BaseLM, so we override them as
     # properties (not instance attributes) reading from the spec. JSONAdapter
@@ -96,7 +100,7 @@ class WorkflowLM(dspy.BaseLM):
                 program=self._program,
             ),
             result_type=LMCallOutput,
-            **self._options.activity_kwargs(),
+            **self._options.activity_kwargs(task_queue=self._task_queue),
         )
 
         # Replicate dspy.LM.forward's usage-tracker side effect so the

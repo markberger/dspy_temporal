@@ -67,17 +67,13 @@ async def _coarse_activity_call(
 
     ``task_queue`` routes the activity to a dedicated queue (the cheap-workflow-
     workers + dedicated-activity-pool split); ``None`` co-locates it with the
-    calling workflow's queue. Temporal rejects ``task_queue=None``, so it is only
-    added to the dispatch kwargs when set.
+    calling workflow's queue (see ``CallOptions.activity_kwargs``).
     """
-    kwargs = options.activity_kwargs()
-    if task_queue is not None:
-        kwargs["task_queue"] = task_queue
     return await workflow.execute_activity(
         ACTIVITY_NAME,
         call,
         result_type=ProgramCallOutput,
-        **kwargs,
+        **options.activity_kwargs(task_queue=task_queue),
     )
 
 
@@ -111,7 +107,11 @@ async def execute_coarse(
 
 
 async def execute_fine(
-    name: str, inputs: dict[str, Any], options: CallOptions | None = None
+    name: str,
+    inputs: dict[str, Any],
+    options: CallOptions | None = None,
+    *,
+    task_queue: str | None = None,
 ) -> dspy.Prediction:
     """Run a fine program from workflow code and return a ``dspy.Prediction``.
 
@@ -120,6 +120,10 @@ async def execute_fine(
     and activity-backed tools, so each LM call and tool call becomes its own
     activity (durable, independently retried) while the loop control stays
     deterministic. See ``fine/workflow.py`` for the full rationale.
+
+    ``task_queue`` routes *every* per-call activity (the describe, and each
+    ``dspy_lm_call`` / ``dspy_tool_call``) to a dedicated queue; ``None``
+    co-locates them with the calling workflow's queue.
     """
     # Lazy (cycle-breaking) seam import; passthrough so the sandbox reuses host.
     with workflow.unsafe.imports_passed_through():
@@ -136,7 +140,7 @@ async def execute_fine(
         DESCRIBE_ACTIVITY_NAME,
         LMDescribeInput(program=name),
         result_type=LMSpecsOutput,
-        **options.activity_kwargs(),
+        **options.activity_kwargs(task_queue=task_queue),
     )
 
     program = default_registry().build(name)
@@ -149,7 +153,9 @@ async def execute_fine(
         for tool_name, tool in list(tools.items()):
             if tool_name in _LOCAL_TOOLS:
                 continue
-            tools[tool_name] = WorkflowTool(tool, program=name, options=options)
+            tools[tool_name] = WorkflowTool(
+                tool, program=name, options=options, task_queue=task_queue
+            )
 
     # Bind a per-predictor WorkflowLM so each predictor routes to *its own* LM
     # (honoring a bound `.lm`); the activity resolves lm_ref -> real LM.
@@ -163,6 +169,7 @@ async def execute_fine(
             lm_ref=predictor_name,
             program=name,
             options=options,
+            task_queue=task_queue,
         )
     # Context fallback for any predictor created dynamically at call time (not in
     # the startup walk) -> routes to the worker default LM.
@@ -171,6 +178,7 @@ async def execute_fine(
         lm_ref=DEFAULT_LM_REF,
         program=name,
         options=options,
+        task_queue=task_queue,
     )
     # track_usage=True so Module.acall accumulates per-call usage (fed by
     # WorkflowLM) and stamps it on the prediction. callbacks=[] so no spans are

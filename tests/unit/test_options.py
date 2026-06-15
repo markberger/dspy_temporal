@@ -68,3 +68,13 @@ def test_activity_kwargs_keys_and_default_heartbeat():
 def test_activity_kwargs_includes_heartbeat_when_set():
     kw = CallOptions(heartbeat_timeout_seconds=5).activity_kwargs()
     assert kw["heartbeat_timeout"] == timedelta(seconds=5)
+
+
+def test_activity_kwargs_omits_task_queue_by_default():
+    # Temporal rejects an explicit task_queue=None, so it must be absent, not None.
+    assert "task_queue" not in CallOptions().activity_kwargs()
+
+
+def test_activity_kwargs_includes_task_queue_when_set():
+    kw = CallOptions().activity_kwargs(task_queue="gpu-pool")
+    assert kw["task_queue"] == "gpu-pool"

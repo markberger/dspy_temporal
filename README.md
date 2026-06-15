@@ -161,8 +161,8 @@ A runnable version of this flow lives in `examples/` (`qa_program.py`, `worker.p
   standalone workflow. Per-call tweaks return a modified copy:
   `ref.with_options(...)` / `ref.on_task_queue(...)`.
 - **Predictions round-trip (or your typed result).** Without `result`, `run`/`start` return a
-  `dspy.Prediction` with `get_lm_usage()` intact; with a `result` adapter, `run()` returns your
-  own type so workflow code speaks pydantic, not dspy.
+  `dspy.Prediction` with `get_lm_usage()` intact; with a `result` adapter, `run`/`start` return
+  your own type so caller code speaks pydantic, not dspy.
 
 ## Execution modes: coarse vs. fine
 
@@ -294,8 +294,9 @@ any workflow it degrades to a plain local DSPy call. Because the workflow class 
 import, a thin client starts it **type-safely** —
 `await client.start_workflow(ResearchWorkflow.run, question, id=..., task_queue=...)`.
 
-**Typed results.** Give the reference a `result` adapter so `run()` returns your own type and
-dspy never leaks into the workflow (validation, e.g. a confidence clamp, lives on the model):
+**Typed results.** Give the reference a `result` adapter so `run()` (composing in your workflow)
+and `start()` (standalone) both return your own type and dspy never leaks into caller code
+(validation, e.g. a confidence clamp, lives on the model):
 
 ```python
 agent = dt.program("compose_qa", result=lambda p: Answer(text=str(p.answer)))
@@ -303,8 +304,9 @@ agent = dt.program("compose_qa", result=lambda p: Answer(text=str(p.answer)))
 
 **Dedicated activity pool.** `program(..., activity_task_queue="gpu-pool")` (or
 `agent.on_task_queue("gpu-pool")`) routes the LM-heavy activity to its own worker pool while
-your workflow stays on the cheap queue. Runnable example: `examples/compose_refs.py` +
-`examples/compose_program.py` + `examples/run_compose.py`.
+your workflow stays on the cheap queue — in coarse mode the single program activity, in fine
+mode every per-call `dspy_lm_call` / `dspy_tool_call`. Runnable example: `examples/compose_refs.py`
++ `examples/compose_program.py` + `examples/run_compose.py`.
 
 ### Fine-grained mode (per-call activities)
 

@@ -95,6 +95,19 @@ async def test_acall_returns_outputs_and_feeds_usage_tracker(fake_lm_activity):
 
 
 @pytest.mark.asyncio
+async def test_acall_routes_to_task_queue_when_set(fake_lm_activity):
+    """A task_queue on the seam routes the dspy_lm_call activity to a dedicated
+    pool; without one the key is absent (Temporal rejects task_queue=None)."""
+    state = fake_lm_activity(LMCallOutput(outputs=["x"], usage={}))
+
+    await WorkflowLM(spec=_spec(), task_queue="gpu-pool").acall(prompt="hi")
+    assert state["kwargs"]["task_queue"] == "gpu-pool"
+
+    await WorkflowLM(spec=_spec()).acall(prompt="hi")
+    assert "task_queue" not in state["kwargs"]
+
+
+@pytest.mark.asyncio
 async def test_acall_without_tracker_or_usage_is_a_noop(fake_lm_activity):
     """The guard's false branch: no usage tracker -> nothing to feed, no error."""
     fake_lm_activity(LMCallOutput(outputs=["hi"], usage={}))

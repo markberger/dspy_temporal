@@ -71,15 +71,23 @@ class CallOptions(BaseModel):
             non_retryable_error_types=list(self.non_retryable_error_types),
         )
 
-    def activity_kwargs(self) -> dict:
+    def activity_kwargs(self, *, task_queue: str | None = None) -> dict:
         """Timeouts/retry/heartbeat kwargs for ``workflow.execute_activity``.
 
         The single source of truth shared by every activity dispatch (coarse and
         fine) so the option set behaves identically across modes. A ``None``
         ``heartbeat_timeout`` is equivalent to omitting it (no heartbeat timeout).
+
+        ``task_queue`` routes the activity to a dedicated queue (the cheap-workflow-
+        workers + dedicated-activity-pool split); ``None`` co-locates it with the
+        calling workflow's queue. Temporal rejects an explicit ``task_queue=None``,
+        so it is only added to the kwargs when set.
         """
-        return {
+        kwargs = {
             "start_to_close_timeout": self.start_to_close_timeout(),
             "heartbeat_timeout": self.heartbeat_timeout(),
             "retry_policy": self.retry_policy(),
         }
+        if task_queue is not None:
+            kwargs["task_queue"] = task_queue
+        return kwargs

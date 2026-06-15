@@ -244,6 +244,36 @@ async def test_start_honors_workflow_id_and_options_overrides():
 
 
 @pytest.mark.asyncio
+async def test_start_uses_ref_default_options():
+    """A ref-level ``options`` default (``program(..., options=...)``) is honored on
+    the start path -- the program's declared timeout/retry, not CallOptions()
+    defaults, reaches the standalone workflow when ``start`` omits ``options``."""
+    client = FakeClient()
+    ref = dt.program("qa", options=CallOptions(maximum_attempts=5))
+
+    await ref.start(client, task_queue="tq", question="sky?")
+
+    assert client.calls[0]["call"].options.maximum_attempts == 5
+
+
+@pytest.mark.asyncio
+async def test_start_options_arg_overrides_ref_default():
+    """An explicit ``options`` on ``start`` overrides the ref-level default for
+    that one start."""
+    client = FakeClient()
+    ref = dt.program("qa", options=CallOptions(maximum_attempts=5))
+
+    await ref.start(
+        client,
+        task_queue="tq",
+        question="sky?",
+        options=CallOptions(maximum_attempts=9),
+    )
+
+    assert client.calls[0]["call"].options.maximum_attempts == 9
+
+
+@pytest.mark.asyncio
 async def test_start_input_named_client_is_not_swallowed():
     """``client`` is positional-only, so a program input field literally named
     ``client`` is forwarded as an input, not bound to start's own parameter."""
@@ -310,9 +340,10 @@ async def test_run_in_workflow_coarse_forwards_options_and_task_queue(monkeypatc
 async def test_run_in_workflow_fine_dispatches_execute_fine(monkeypatch):
     recorded = {}
 
-    async def fake_execute_fine(name, inputs, options):
+    async def fake_execute_fine(name, inputs, options, *, task_queue=None):
         recorded["name"] = name
         recorded["options"] = options
+        recorded["task_queue"] = task_queue
         return dspy.Prediction(answer="from_fine")
 
     monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: True)
@@ -326,6 +357,28 @@ async def test_run_in_workflow_fine_dispatches_execute_fine(monkeypatch):
     assert pred.answer == "from_fine"
     assert recorded["name"] == "qa"
     assert recorded["options"] is opts
+    # A bare fine ref co-locates its per-call activities (no task_queue).
+    assert recorded["task_queue"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_in_workflow_fine_forwards_task_queue(monkeypatch):
+    """activity_task_queue routes fine mode too: execute_fine receives the queue so
+    every per-call activity lands on the dedicated pool (not a silent no-op)."""
+    recorded = {}
+
+    async def fake_execute_fine(name, inputs, options, *, task_queue=None):
+        recorded["task_queue"] = task_queue
+        return dspy.Prediction(answer="ok")
+
+    monkeypatch.setattr(api_mod.workflow, "in_workflow", lambda: True)
+    monkeypatch.setattr(api_mod, "execute_fine", fake_execute_fine)
+    monkeypatch.setattr(api_mod, "execute_coarse", _should_not_call)
+
+    ref = dt.program("qa", mode=RunMode.FINE).on_task_queue("gpu-pool")
+    await ref.run(question="sky?")
+
+    assert recorded["task_queue"] == "gpu-pool"
 
 
 @pytest.mark.asyncio
@@ -392,6 +445,19 @@ async def test_run_applies_result_adapter_on_degrade_path(monkeypatch, dummy_lm)
 
     with dspy.context(lm=dummy_lm):
         out = await ref.run(question="color of the sky?")
+
+    assert isinstance(out, _Answer)
+    assert out.answer == "blue"
+
+
+@pytest.mark.asyncio
+async def test_start_applies_result_adapter():
+    """The result adapter holds on the start path too -- a standalone start returns
+    the ref's typed value, not a raw dspy.Prediction (same contract as run())."""
+    client = FakeClient()
+    ref = dt.program("qa", result=lambda p: _Answer(answer=p.answer))
+
+    out = await ref.start(client, task_queue="tq", question="sky?")
 
     assert isinstance(out, _Answer)
     assert out.answer == "blue"
