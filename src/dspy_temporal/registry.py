@@ -98,7 +98,7 @@ class _Entry:
     - ``source``: the *original* object the name was registered with. Conflict
       detection compares by identity: re-registering the **same** object is a
       no-op; a **different** object under a taken name raises.
-    - ``mode``: the :class:`RunMode` the name was registered with (via ``deploy``
+    - ``mode``: the :class:`RunMode` the name was registered with (via ``ref.bind``
       / ``register_program(..., mode=...)``), or None if registered without one.
     """
 
@@ -121,7 +121,7 @@ class ProgramRegistry:
       is a no-op (a worker that re-imports a module shouldn't error); registering
       a **different object** under an already-taken name raises -- callers must
       :meth:`unregister` first to replace deliberately.
-    - ``mode`` is the :class:`RunMode` a name was registered with (via ``deploy``
+    - ``mode`` is the :class:`RunMode` a name was registered with (via ``ref.bind``
       / ``register_program(..., mode=...)``), or None if registered without one.
       :meth:`mode_for` reads it so the client can resolve a run mode from the
       registry instead of trusting a possibly-mismatched explicit argument.
@@ -250,8 +250,9 @@ class ProgramRegistry:
                 if explicit is None:
                     raise ValueError(
                         f"Program {name!r} is registered without a run mode and no "
-                        f"mode was given. Pass mode=RunMode.COARSE/FINE, or deploy() "
-                        f"it with a mode."
+                        f"mode was given. Pass mode=RunMode.COARSE/FINE, or bind it "
+                        f"via a ref declared with a mode "
+                        f"(program(name, mode=...).bind(impl))."
                     )
                 return explicit
             if explicit is not None and explicit != registered:
@@ -284,8 +285,8 @@ class ProgramRegistry:
         except KeyError:
             raise KeyError(
                 f"No program registered under {name!r}. Registered: "
-                f"{sorted(self._entries)}. Did the worker import the module that "
-                f"calls deploy()/register_program()?"
+                f"{sorted(self._entries)}. Did the worker bind() the program "
+                f"(ref.bind(impl)) before serving?"
             ) from None
         module = entry.builder()
         if not isinstance(module, dspy.Module):
@@ -317,7 +318,7 @@ class ProgramRegistry:
         self._entries.update(snap)
 
 
-# Process-global default registry. deploy()/register_program() populate
+# Process-global default registry. ref.bind()/register_program() populate
 # this; the activity reads from it at runtime.
 _DEFAULT_REGISTRY = ProgramRegistry()
 
@@ -331,20 +332,20 @@ def register_program(
 ) -> None:
     """Register a program builder or prototype instance in the global registry.
 
-    Pass ``mode`` to record the program's run mode (``deploy`` does this); omit it
+    Pass ``mode`` to record the program's run mode (``ref.bind`` does this); omit it
     to register without one (the client then requires an explicit mode to run it
     by name). Conflict semantics follow :meth:`ProgramRegistry.register`.
 
     Refuses to run inside the Temporal workflow sandbox (see the guardrail below).
     """
-    # Guardrail against a classic footgun: a top-level ``deploy()`` /
+    # Guardrail against a classic footgun: a top-level ``ref.bind()`` /
     # ``register_program()`` placed in a *workflow file*. Temporal's sandbox
     # re-execs that file on EVERY workflow task for deterministic isolation, so an
     # import-time registration there would rebuild and re-register the program on
-    # each task (thrashing the registry + the fine-mode cache). The fix is to keep
-    # the side-effecting registration in a host module that the workflow file
-    # passthrough-imports -- see examples/compose_agents.py (the deploy) +
-    # examples/compose_program.py (the workflow, importing the handle).
+    # each task (thrashing the registry + the fine-mode cache). The fix is to
+    # declare the program with the side-effect-free ``program(...)`` in a module the
+    # workflow file imports, and ``bind()`` the implementation on the worker -- see
+    # examples/compose_refs.py (the program() ref) + examples/worker.py (the bind).
     #
     # Use ``workflow.unsafe.in_sandbox()``, NOT ``workflow.in_workflow()``: during
     # the sandbox's module re-exec there is no running workflow, so in_workflow()
@@ -352,13 +353,13 @@ def register_program(
     # normal host import never trips this.
     if workflow.unsafe.in_sandbox():
         raise RuntimeError(
-            f"register_program({name!r}) (or deploy()) was called inside the Temporal "
-            f"workflow sandbox. The sandbox re-execs your workflow file on every "
-            f"task, so a top-level deploy()/register_program() in a workflow file "
-            f"re-registers the program each task. Move the deploy()/register_program() "
-            f"into a separate host module and passthrough-import its handle in the "
-            f"workflow file -- see examples/compose_agents.py (the deploy) and "
-            f"examples/compose_program.py (the workflow importing the handle)."
+            f"register_program({name!r}) (or ref.bind()) was called inside the "
+            f"Temporal workflow sandbox. The sandbox re-execs your workflow file on "
+            f"every task, so a top-level bind()/register_program() in a workflow file "
+            f"re-registers the program each task. Declare the program with the "
+            f"side-effect-free program(...) in a module the workflow imports, and "
+            f"bind() the implementation on the worker -- see examples/compose_refs.py "
+            f"(the program() ref) and examples/worker.py (the bind)."
         )
     _DEFAULT_REGISTRY.register(name, source, mode=mode)
 

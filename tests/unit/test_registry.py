@@ -408,12 +408,12 @@ def test_resolve_mode_unregistered_explicit_is_returned(fresh_registry):
 
 def test_register_program_refused_in_sandbox(monkeypatch):
     """The module-level register_program refuses to run inside the Temporal
-    workflow sandbox (a top-level deploy() in a workflow file re-execs each task).
+    workflow sandbox (a top-level ref.bind() in a workflow file re-execs each task).
     Uses workflow.unsafe.in_sandbox() -- in_workflow() is False during re-exec."""
     monkeypatch.setattr(
         registry_mod.workflow.unsafe, "in_sandbox", lambda: True, raising=True
     )
-    with pytest.raises(RuntimeError, match=r"sandbox.*compose_agents\.py"):
+    with pytest.raises(RuntimeError, match=r"sandbox.*compose_refs\.py"):
         register_program("in_sandbox", lambda: dspy.Predict("q -> a"))
     # The refusal happened before any mutation -- the name never registered.
     assert "in_sandbox" not in default_registry()

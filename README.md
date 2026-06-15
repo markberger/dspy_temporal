@@ -3,28 +3,28 @@
 [![lint](https://github.com/markberger/dspy_temporal/actions/workflows/lint.yml/badge.svg)](https://github.com/markberger/dspy_temporal/actions/workflows/lint.yml)
 [![test](https://github.com/markberger/dspy_temporal/actions/workflows/test.yml/badge.svg)](https://github.com/markberger/dspy_temporal/actions/workflows/test.yml)
 
-**Deploy [DSPy](https://dspy.ai) programs on [Temporal](https://temporal.io) as durable
+**Run [DSPy](https://dspy.ai) programs on [Temporal](https://temporal.io) as durable
 workflows — with retries, timeouts, and tracing — without writing Temporal code.**
 
 You write a normal `dspy.Module`. `dspy-temporal` wraps it in a Temporal workflow so a
 crash mid-run resumes instead of starting over, transient LM errors retry on a policy you
-control, and every run emits an OpenTelemetry trace — all behind a three-line API.
+control, and every run emits an OpenTelemetry trace — all behind a small API.
 
 ```python
 import dspy
 import dspy_temporal as dt
 
-qa = dt.deploy(lambda: dspy.ChainOfThought("question -> answer"),
-               name="qa", task_queue="dspy-temporal")
+qa = dt.program("qa")                                          # a lightweight reference
+qa.bind(lambda: dspy.ChainOfThought("question -> answer"))     # attach the impl (on the worker)
 
-pred = await qa.start(client, question="Why is the sky blue?")
+pred = await qa.start(client, task_queue="dspy-temporal", question="Why is the sky blue?")
 print(pred.answer)
 ```
 
 ## Why
 
-- **No Temporal boilerplate.** No workflow/activity classes to author — `deploy()` registers
-  your program and hands back a handle you can `start()`.
+- **No Temporal boilerplate.** No workflow/activity classes to author — `program()` declares a
+  reference, `bind()` attaches the implementation on the worker, and you `start()` or compose it.
 - **Durable by default.** Runs survive worker crashes and restarts. In fine mode, completed
   LM and tool calls are recorded in history and never re-charged on replay.
 - **Retries & timeouts you control.** Per-run `CallOptions` set attempt counts, backoff, and
@@ -33,8 +33,9 @@ print(pred.answer)
   history — never a live LM or API key. The LM is configured on the worker.
 - **First-class observability.** One OpenTelemetry trace per run, dual-emitted as gen_ai
   semantic conventions *and* OpenInference (Arize Phoenix), with token usage and cost.
-- **Composable.** Drop a deployed program into your own `@workflow.defn` and interleave it
-  with timers, activities, and child workflows as one replayable execution.
+- **Bring your own workflow.** The `program()` reference is dspy-free and side-effect-free, so
+  your `@workflow.defn` imports it with a plain `import` (no passthrough dance), composes it with
+  `await ref.run(...)`, and gets back a typed result — dspy never enters your workflow code.
 
 ## Contents
 
@@ -45,7 +46,7 @@ print(pred.answer)
 - [Configuring the LM](#configuring-the-lm)
 - [Tuning retries & timeouts](#tuning-retries--timeouts)
 - [Recipes](#recipes)
-  - [Deploy a compiled / live module](#deploy-a-compiled--live-module)
+  - [Bind a compiled / live module](#bind-a-compiled--live-module)
   - [Compose a program inside your own workflow](#compose-a-program-inside-your-own-workflow)
   - [Fine-grained mode (per-call activities)](#fine-grained-mode-per-call-activities)
   - [Wire your own worker with the plugin](#wire-your-own-worker-with-the-plugin)
@@ -82,38 +83,40 @@ A deployment has three pieces: a **program** (your `dspy.Module`), a **worker** 
 that runs it), and a **starter** (kicks off a run). The snippets below are plain Python —
 run them with `python your_script.py`.
 
-**1. Define and deploy a program** (`program.py`):
+**1. Declare a program reference** (`program.py`):
 
 ```python
-import dspy
 import dspy_temporal as dt
 
-qa = dt.deploy(
-    lambda: dspy.ChainOfThought("question -> answer"),
-    name="qa",
-    task_queue="dspy-temporal",
-)
+qa = dt.program("qa")
 ```
 
-`deploy()` takes a **zero-arg builder** that returns a fresh `dspy.Module`. The returned
-`qa` handle carries the `task_queue` and `mode`, so you never repeat them when starting a
-run. `task_queue` is what keeps the worker and the run on the same queue.
+`program()` returns a lightweight, immutable **reference** — just a name (plus optional
+`mode`, `options`, and a typed `result` adapter). It registers nothing and loads no model, so
+this module is safe to import from anywhere (your workflow, a thin client). The
+implementation is attached separately, on the worker.
 
-**2. Run a worker** (`worker.py` — importing `program.py` registers the builder):
+**2. Run a worker** (`worker.py` — binds the implementation, then serves):
 
 ```python
 import asyncio
+import dspy
 import dspy_temporal as dt
-import program  # registers "qa"
+from program import qa
 
 async def main():
     dt.configure_lm_from_env()                       # DSPY_LM_MODEL + provider keys from env
+    qa.bind(lambda: dspy.ChainOfThought("question -> answer"))   # attach the impl here
     client = await dt.connect("localhost:7233")
     worker = dt.build_worker(client, task_queue="dspy-temporal")
     await worker.run()
 
 asyncio.run(main())
 ```
+
+`bind()` takes a **zero-arg builder** that returns a fresh `dspy.Module` (or a live instance —
+see [below](#bind-a-compiled--live-module)). It's the heavy, side-effecting step that
+populates the worker's registry, so it belongs on the worker — never in a workflow file.
 
 Point the worker at its LM via environment variables:
 
@@ -127,11 +130,11 @@ export OPENAI_API_KEY=sk-...
 ```python
 import asyncio
 import dspy_temporal as dt
-from program import qa     # the handle returned by deploy
+from program import qa     # the reference from program()
 
 async def main():
     client = await dt.connect("localhost:7233")
-    pred = await qa.start(client, question="Why is the sky blue?")
+    pred = await qa.start(client, task_queue="dspy-temporal", question="Why is the sky blue?")
     print(pred.answer)
 
 asyncio.run(main())
@@ -142,22 +145,28 @@ A runnable version of this flow lives in `examples/` (`qa_program.py`, `worker.p
 
 ## Concepts
 
-- **Builder, not instance.** You register a zero-arg callable that returns a fresh
-  `dspy.Module`. Each run builds its own program, so there's no shared mutable state and
-  nothing live to serialize. (You can also [deploy a compiled instance](#deploy-a-compiled--live-module).)
+- **Declaration vs. implementation.** `program(name, ...)` is the *declaration* — a pure,
+  immutable reference the workflow and a thin client import. `ref.bind(impl)` is the
+  *implementation* — the heavy, side-effecting registration the worker does. Splitting them is
+  what lets a workflow file import the reference cheaply and safely.
+- **Builder, not instance.** You bind a zero-arg callable that returns a fresh `dspy.Module`.
+  Each run builds its own program, so there's no shared mutable state and nothing live to
+  serialize. (You can also [bind a compiled instance](#bind-a-compiled--live-module).)
 - **The boundary is name + inputs.** Only the program name and call inputs cross into
   Temporal. The LM — and its API key — is configured on the worker from its environment and
   never enters workflow history.
-- **The handle is the source of truth.** `deploy()` returns a `TemporalProgram` that knows
-  its own `task_queue` and `mode`. `handle.start(client, **inputs)` runs it as a standalone
-  workflow; `handle.run(**inputs)` composes it inside your own workflow. You never re-pass
-  queue or mode.
-- **Predictions round-trip.** `start()` returns a `dspy.Prediction` with `get_lm_usage()`
-  intact, just as a local DSPy call would.
+- **The reference carries the run knobs.** A `TemporalProgram` knows its `mode`, default
+  `options`, optional `activity_task_queue`, and `result` adapter. `ref.run(**inputs)` composes
+  it inside your own workflow; `ref.start(client, task_queue=..., **inputs)` runs it as a
+  standalone workflow. Per-call tweaks return a modified copy:
+  `ref.with_options(...)` / `ref.on_task_queue(...)`.
+- **Predictions round-trip (or your typed result).** Without `result`, `run`/`start` return a
+  `dspy.Prediction` with `get_lm_usage()` intact; with a `result` adapter, `run()` returns your
+  own type so workflow code speaks pydantic, not dspy.
 
 ## Execution modes: coarse vs. fine
 
-The same worker serves both modes; you pick per program with `mode=` on `deploy()`.
+The same worker serves both modes; you pick per program with `mode=` on `program()`.
 
 | | **Coarse** (default) | **Fine** |
 |---|---|---|
@@ -165,7 +174,7 @@ The same worker serves both modes; you pick per program with `mode=` on `deploy(
 | Where orchestration runs | inside the activity | in the workflow (deterministic replay) |
 | Durability granularity | job-level: a crash re-runs the program | step-level: completed LM/tool calls survive a crash and aren't re-charged |
 | Tracing | `Workflow → Activity → dspy.module → chat <model>` | per-call spans, each LM call on an isolated copy with exact token usage |
-| Best for | "just deploy it" — full DSPy fidelity, lowest friction | long/agentic runs (e.g. ReAct) where resuming mid-run matters |
+| Best for | "just run it" — full DSPy fidelity, lowest friction | long/agentic runs (e.g. ReAct) where resuming mid-run matters |
 | Opt in | `mode=dt.RunMode.COARSE` (default) | `mode=dt.RunMode.FINE` |
 
 **Coarse mode** keeps DSPy fully intact — adapters, caching, in-program concurrency — and is
@@ -193,13 +202,24 @@ the default applied only to predictors that don't carry one.
 
 ## Tuning retries & timeouts
 
-Pass `CallOptions` per run to override the defaults:
+Set defaults on the reference (`program(..., options=...)`), or override per run. For
+`start()`, pass `options=`; inside a workflow, use the fluent copy `ref.with_options(...)`:
 
 ```python
+# default for every run of this program:
+qa = dt.program("qa", options=dt.CallOptions(maximum_attempts=5))
+
+# one-off override at start:
 pred = await qa.start(
     client,
+    task_queue="dspy-temporal",
     question="Why is the sky blue?",
     options=dt.CallOptions(maximum_attempts=5, start_to_close_timeout_seconds=120),
+)
+
+# one-off override when composing in a workflow:
+pred = await qa.with_options(dt.CallOptions(start_to_close_timeout_seconds=900)).run(
+    question="Why is the sky blue?"
 )
 ```
 
@@ -215,54 +235,76 @@ pred = await qa.start(
 
 ## Recipes
 
-### Deploy a compiled / live module
+### Bind a compiled / live module
 
-`deploy()` also accepts a **live `dspy.Module` instance** — handy for a program optimized
-with a DSPy teleprompter, whose predictors carry few-shot demos. The instance stays in
-worker memory as a prototype; each run gets a fresh, LM-stripped `deepcopy` (demos
-preserved, no bound LM or API key ever serialized):
+`bind()` also accepts a **live `dspy.Module` instance** — handy for a program optimized with a
+DSPy teleprompter, whose predictors carry few-shot demos. The instance stays in worker memory
+as a prototype; each run gets a fresh, LM-stripped `deepcopy` (demos preserved, no bound LM or
+API key ever serialized):
 
 ```python
-program = dspy.ChainOfThought("question -> answer")   # or a compiled program with demos
-qa = dt.deploy(program, name="qa", task_queue="dspy-temporal")
+compiled = dspy.ChainOfThought("question -> answer")   # or a compiled program with demos
+qa = dt.program("qa")
+qa.bind(compiled)                                      # on the worker
 ```
 
-Runnable example: `examples/deploy_instance.py`.
+Runnable example: `examples/instance_program.py`.
 
 ### Compose a program inside your own workflow
 
-The handle's `await agent.run(**inputs)` is **context-aware**:
+This is the path the declaration/implementation split is built for. Because `program()` is a
+pure reference, three roles each import exactly what they need:
 
-- **inside a user-authored `@workflow.defn`** it dispatches our activities inline, so you can
-  interleave DSPy calls with your own workflow logic (timers, activities, child workflows) as
-  one durable, replayable execution;
-- **outside any workflow** it degrades to a plain local DSPy call against your configured
-  `dspy.settings` LM.
+**`refs.py` — the shared, side-effect-free reference** (safe to import from the workflow
+*and* a thin client):
 
 ```python
-from datetime import timedelta
-import dspy
-from temporalio import workflow
 import dspy_temporal as dt
 
-agent = dt.deploy(lambda: dspy.ChainOfThought("question -> answer"),
-                  name="compose_qa", task_queue="dspy-temporal")
+agent = dt.program("compose_qa")   # no registry mutation, no model load, no dspy import
+```
+
+**`workflow.py` — your workflow** imports the reference with a *plain* `import` (no
+`imports_passed_through()` dance) and calls `await agent.run(...)`:
+
+```python
+from temporalio import workflow
+from refs import agent
 
 @workflow.defn
 class ResearchWorkflow:
     @workflow.run
     async def run(self, question: str) -> str:
         first = await agent.run(question=question)          # one durable activity step
-        await workflow.sleep(timedelta(seconds=1))          # ...interleave your own logic...
         followup = await agent.run(question=f"Summarize in one word: {first.answer}")
         return followup.answer
 ```
 
-Register the user workflow on the worker with
-`build_worker(..., extra_workflows=[ResearchWorkflow])` (or the [plugin](#wire-your-own-worker-with-the-plugin)).
-`agent.run()` is the compose verb; `agent.start(client, ...)` is how you start the deployed
-program *itself* as a standalone workflow. Runnable example: `examples/compose_program.py` +
-`examples/run_compose.py`.
+**`worker.py` — binds the implementation** and serves both the program and your workflow:
+
+```python
+agent.bind(lambda: dspy.ChainOfThought("question -> answer"))
+worker = dt.build_worker(client, task_queue="dspy-temporal",
+                         extra_workflows=[ResearchWorkflow])
+```
+
+`agent.run()` is **context-aware**: inside a `@workflow.defn` it dispatches our activity inline
+(interleave it with timers, activities, child workflows as one replayable execution); outside
+any workflow it degrades to a plain local DSPy call. Because the workflow class is now cheap to
+import, a thin client starts it **type-safely** —
+`await client.start_workflow(ResearchWorkflow.run, question, id=..., task_queue=...)`.
+
+**Typed results.** Give the reference a `result` adapter so `run()` returns your own type and
+dspy never leaks into the workflow (validation, e.g. a confidence clamp, lives on the model):
+
+```python
+agent = dt.program("compose_qa", result=lambda p: Answer(text=str(p.answer)))
+```
+
+**Dedicated activity pool.** `program(..., activity_task_queue="gpu-pool")` (or
+`agent.on_task_queue("gpu-pool")`) routes the LM-heavy activity to its own worker pool while
+your workflow stays on the cheap queue. Runnable example: `examples/compose_refs.py` +
+`examples/compose_program.py` + `examples/run_compose.py`.
 
 ### Fine-grained mode (per-call activities)
 
@@ -281,13 +323,13 @@ def build_agent() -> dspy.Module:
     # The builder runs in the WORKFLOW: construct dspy objects only — no network/file/DB here.
     return dspy.ReAct("question -> answer", tools=[get_weather])
 
-agent = dt.deploy(build_agent, name="weather_agent",
-                  task_queue="dspy-temporal", mode=dt.RunMode.FINE)
+weather_agent = dt.program("weather_agent", mode=dt.RunMode.FINE)
+weather_agent.bind(build_agent)               # on the worker
 ```
 
-Run it the usual way — `await agent.start(client, question=...)`. In the Temporal UI you'll
-see distinct `dspy_lm_call` / `dspy_tool_call` activities per run. Runnable example:
-`examples/react_program.py`, `examples/run_react.py`.
+Run it the usual way — `await weather_agent.start(client, task_queue="dspy-temporal",
+question=...)`. In the Temporal UI you'll see distinct `dspy_lm_call` / `dspy_tool_call`
+activities per run. Runnable example: `examples/react_program.py`, `examples/run_react.py`.
 
 **Where each piece runs:** tool *bodies* and LM HTTP calls run in activities (real I/O
 allowed); the builder, the ReAct loop, and adapter format/parse run in the workflow as
@@ -412,10 +454,10 @@ Everything below is importable as `dt.X` (`import dspy_temporal as dt`).
 
 | Symbol | Summary |
 |---|---|
-| `deploy(source, *, name, task_queue, mode=RunMode.COARSE)` | Register a builder or live module; returns a `TemporalProgram`. |
-| `TemporalProgram` | Handle from `deploy`. `.start(client, **inputs)` runs it standalone; `.run(**inputs)` composes it in your workflow. |
+| `program(name, *, mode=RunMode.COARSE, options=None, activity_task_queue=None, result=None)` | Declare an immutable program reference (pure: no registration, no I/O). |
+| `TemporalProgram` | The reference `program()` returns. `.bind(impl)` registers a builder/live module (worker-side); `.run(**inputs)` composes it in your workflow; `.start(client, *, task_queue, **inputs)` runs it standalone; `.with_options(...)` / `.on_task_queue(...)` return modified copies. |
 | `run_program(client, name, inputs, *, task_queue, workflow_id=None, options=None, mode=None)` | Low-level by-name start (a thin client must pass `mode`). |
-| `build_worker(client, *, task_queue, max_concurrent_activities=100, extra_workflows=(), extra_passthrough_modules=(), **worker_kwargs)` | Build a `Worker` serving all deployed programs. |
+| `build_worker(client, *, task_queue, max_concurrent_activities=100, extra_workflows=(), extra_passthrough_modules=(), **worker_kwargs)` | Build a `Worker` serving all bound programs. |
 | `DSPyPlugin(...)` | Client+worker plugin to wire DSPy into a `Worker` you build yourself. |
 | `connect(address, **kwargs)` | Connect a Temporal `Client` with the pydantic data converter installed. |
 | `configure_lm_from_env(model=None, **lm_kwargs)` | Build a `dspy.LM` from env and set it as the worker LM. |

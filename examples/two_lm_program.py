@@ -10,7 +10,8 @@ No API key is ever placed on a ``dspy.LM`` here -- litellm reads
 ``OPENROUTER_API_KEY`` from the worker's environment at call time, and the model
 spec that crosses to the workflow has secret kwargs stripped.
 
-Imported by ``examples/worker.py`` so the builder registers at worker startup.
+The worker binds the ``TwoLMQA`` builder at startup (``two_lm_qa.bind(TwoLMQA)``,
+see ``examples/worker.py``).
 """
 
 import dspy
@@ -49,9 +50,4 @@ class TwoLMQA(dspy.Module):
         )
 
 
-two_lm_qa = dt.deploy(
-    TwoLMQA,
-    name="two_lm_qa",
-    task_queue=TASK_QUEUE,
-    mode=dt.RunMode.FINE,
-)
+two_lm_qa = dt.program("two_lm_qa", mode=dt.RunMode.FINE)

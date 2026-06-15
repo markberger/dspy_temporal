@@ -17,20 +17,27 @@ Run:
 import asyncio
 import os
 
-# Importing these registers the program builders + the composed user workflow.
-import compose_program  # noqa: F401  (registers "compose_qa" + ResearchWorkflow)
-import deploy_instance  # noqa: F401  (registers "qa_instance" from a live instance)
-import react_program  # noqa: F401  (registers "weather_agent")
-import two_lm_program  # noqa: F401  (registers "two_lm_qa")
+import dspy
 from compose_program import ResearchWorkflow
-from qa_program import TASK_QUEUE
+from compose_refs import triage_agent
+from instance_program import prototype, qa_instance
+from qa_program import TASK_QUEUE, build_qa, qa
+from react_program import build_weather_agent, weather_agent
 from temporalio.worker import Worker
+from two_lm_program import TwoLMQA, two_lm_qa
 
 import dspy_temporal as dt
 
 
 async def main() -> None:
     dt.configure_lm_from_env()
+    # Bind each declared program to its implementation (worker-side only).
+    qa.bind(build_qa)
+    weather_agent.bind(build_weather_agent)
+    two_lm_qa.bind(TwoLMQA)
+    qa_instance.bind(prototype)
+    triage_agent.bind(lambda: dspy.ChainOfThought("question -> answer"))
+
     address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
     client = await dt.connect(address)
 

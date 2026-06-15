@@ -19,11 +19,7 @@ from dspy_temporal.converter import data_converter
 @pytest.mark.asyncio
 async def test_end_to_end_worker_with_plugin(dummy_lm):
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
-    dt.deploy(
-        lambda: dspy.ChainOfThought("question -> answer"),
-        name="qa_plugin",
-        task_queue=task_queue,
-    )
+    dt.program("qa_plugin").bind(lambda: dspy.ChainOfThought("question -> answer"))
     dt.set_worker_lm(dummy_lm)
 
     async with await WorkflowEnvironment.start_time_skipping(
@@ -51,11 +47,7 @@ async def test_plugin_on_client_installs_converter_and_propagates(dummy_lm):
     """A single DSPyPlugin() on the *client* installs the pydantic converter and,
     being a worker plugin too, propagates the DSPy set to a bare Worker (#11)."""
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
-    dt.deploy(
-        lambda: dspy.ChainOfThought("question -> answer"),
-        name="qa_propagate",
-        task_queue=task_queue,
-    )
+    dt.program("qa_propagate").bind(lambda: dspy.ChainOfThought("question -> answer"))
     dt.set_worker_lm(dummy_lm)
 
     # No explicit data_converter: the plugin's configure_client must install it.
@@ -84,11 +76,7 @@ async def test_plugin_replays_recorded_history(dummy_lm):
     pydantic converter the replayer needs to decode and re-execute the history."""
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
     workflow_id = f"dspy-replay-{uuid.uuid4().hex[:8]}"
-    dt.deploy(
-        lambda: dspy.ChainOfThought("question -> answer"),
-        name="qa_replay",
-        task_queue=task_queue,
-    )
+    dt.program("qa_replay").bind(lambda: dspy.ChainOfThought("question -> answer"))
     dt.set_worker_lm(dummy_lm)
 
     async with await WorkflowEnvironment.start_time_skipping(

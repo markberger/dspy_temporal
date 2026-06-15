@@ -75,9 +75,9 @@ class DSPyPlugin(temporalio.client.Plugin, temporalio.worker.Plugin):
     """A combined client + worker plugin that contributes the DSPy set.
 
     Subclasses both ``temporalio.client.Plugin`` and ``temporalio.worker.Plugin``;
-    programs register via import side effects into the process-global registry
-    (``deploy`` / ``register_program``), so the plugin wires the fixed activity +
-    workflow set regardless of which programs are deployed.
+    programs register into the process-global registry (``ref.bind`` /
+    ``register_program``), so the plugin wires the fixed activity + workflow set
+    regardless of which programs are bound.
     """
 
     def __init__(

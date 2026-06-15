@@ -74,12 +74,7 @@ async def test_two_lm_example_routes_each_predictor(two_lm_example):
         return program
 
     task_queue = f"tq-{uuid.uuid4().hex[:8]}"
-    dt.deploy(
-        build_offline_two_lm,
-        name="two_lm_qa_offline",
-        task_queue=task_queue,
-        mode=dt.RunMode.FINE,
-    )
+    dt.program("two_lm_qa_offline", mode=dt.RunMode.FINE).bind(build_offline_two_lm)
     # The worker default backs the __default__ spec/fallback; named so it can't be
     # confused with the two per-predictor models.
     dt.set_worker_lm(_NamedDummyLM("default-model", [{"answer": "blue"}] * 5))

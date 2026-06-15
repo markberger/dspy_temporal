@@ -43,9 +43,8 @@ def restore_registry():
     Without this, the conflict guard (#30) would make a name registered by one
     test raise in the next test that re-registers it with a different object. We
     snapshot/restore (via :meth:`ProgramRegistry.snapshot` / ``restore``) rather
-    than blanket-clear so import-time registrations (e.g. an example module's
-    ``deploy`` at import) survive *within* a test and then roll back cleanly
-    between tests.
+    than blanket-clear so any registrations made *within* a test (e.g. a
+    ``ref.bind(impl)``) survive that test and then roll back cleanly between tests.
 
     The fine-mode LM-map cache is cleared in this fixture's OWN teardown, right
     after the registry restore: the cache is keyed off registry registrations, so
