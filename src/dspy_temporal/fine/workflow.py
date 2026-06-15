@@ -9,7 +9,7 @@ history, so a crash + replay resumes from the last finished step.
 
 The orchestration body itself lives in :func:`dspy_temporal.execute.execute_fine`
 (shared with the context-aware ``TemporalProgram.run`` so a user can compose a
-deployed program into their own workflow). This class is the thin generic
+program into their own workflow). This class is the thin generic
 wrapper: it runs that body and adapts the returned ``Prediction`` to the
 over-the-wire ``ProgramCallOutput`` shape. See ``execute.py`` for the full
 replay-safety and import-passthrough rationale.

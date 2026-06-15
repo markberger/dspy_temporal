@@ -236,8 +236,8 @@ class ProgramRegistry:
         """Resolve the run mode for a by-name run, validating ``explicit`` against
         the registry. The client's :func:`run_program` delegates here.
 
-        - If ``name`` was deployed in this process with a mode, that mode wins; a
-          conflicting ``explicit`` raises (use ``handle.start`` to avoid it).
+        - If ``name`` was registered in this process with a mode, that mode wins; a
+          conflicting ``explicit`` raises (use ``ref.start`` to avoid it).
         - If ``name`` was registered *without* a mode (low-level
           ``register_program``), ``explicit`` is required (none -> raises).
         - If ``name`` is not registered in this process (a thin client that never
@@ -259,7 +259,7 @@ class ProgramRegistry:
                 raise ValueError(
                     f"Program {name!r} is registered as mode={registered.value!r} but "
                     f"run_program was called with mode={explicit.value!r}. Use "
-                    f"handle.start() (the can't-desync path), or pass the matching "
+                    f"ref.start() (the can't-desync path), or pass the matching "
                     f"mode / omit it."
                 )
             return registered

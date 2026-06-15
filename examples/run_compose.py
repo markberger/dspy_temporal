@@ -1,10 +1,10 @@
-"""Start the user-authored ResearchWorkflow (which composes a deployed program).
+"""Start the user-authored ResearchWorkflow (which composes a program).
 
 Run (with a worker already running that serves ResearchWorkflow):
     uv run python examples/run_compose.py "Why is the sky blue?"
 
-Unlike ``run.py`` (which calls ``dt.run_program`` to start one of our generic
-program workflows), this starts the *user's* workflow directly -- ``agent.run()``
+Unlike ``run.py`` (which calls ``qa.start(...)`` to run a single program as its
+own workflow), this starts the *user's* workflow directly -- ``triage_agent.run()``
 is dispatched inside it. The worker must register ResearchWorkflow, e.g. via
 ``build_worker(..., extra_workflows=[ResearchWorkflow])`` (see examples/worker.py).
 """
@@ -31,7 +31,7 @@ async def main() -> None:
         task_queue=TASK_QUEUE,
     )
     print("Q:", question)
-    print("A:", answer)
+    print("A:", answer.text)
 
 
 if __name__ == "__main__":

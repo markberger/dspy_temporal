@@ -378,7 +378,7 @@ def test_resolve_mode_registered_with_mode_explicit_equal_ok(fresh_registry):
 def test_resolve_mode_registered_with_mode_explicit_conflict_raises(fresh_registry):
     fresh_registry.register("m", lambda: dspy.Predict("q -> a"), mode=dt.RunMode.COARSE)
     with pytest.raises(
-        ValueError, match=r"registered as mode='coarse'.*mode='fine'.*handle\.start"
+        ValueError, match=r"registered as mode='coarse'.*mode='fine'.*ref\.start"
     ):
         fresh_registry.resolve_mode("m", dt.RunMode.FINE)
 

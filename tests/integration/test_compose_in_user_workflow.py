@@ -72,5 +72,6 @@ async def test_compose_agent_run_inside_user_workflow(compose_example, dummy_lm)
             )
 
     # Both composed agent.run() calls dispatched the coarse activity and the
-    # DummyLM's answer flowed back through the user workflow.
-    assert answer == "blue"
+    # DummyLM's answer flowed back through the user workflow, shaped by the ref's
+    # ``result`` adapter into a typed ``Answer``.
+    assert answer.text == "blue"

@@ -24,6 +24,7 @@ from datetime import timedelta
 # file needs no passthrough block and never risks the registry sandbox guardrail.
 from compose_refs import (  # noqa: F401  (TASK_QUEUE re-exported for run_compose.py)
     TASK_QUEUE,
+    Answer,
     triage_agent,
 )
 from temporalio import workflow
@@ -34,13 +35,14 @@ class ResearchWorkflow:
     """A user workflow that calls a program reference as durable steps."""
 
     @workflow.run
-    async def run(self, question: str) -> str:
+    async def run(self, question: str) -> Answer:
         # Each triage_agent.run dispatches the program's activity inline -- a
-        # durable, retried step recorded in THIS workflow's history.
+        # durable, retried step recorded in THIS workflow's history. The ref's
+        # ``result`` adapter hands back a typed ``Answer``, so dspy never enters
+        # this workflow code.
         first = await triage_agent.run(question=question)
         # Interleave ordinary workflow logic (here a timer) between DSPy calls.
         await workflow.sleep(timedelta(seconds=1))
-        followup = await triage_agent.run(
-            question=f"In one word, summarize this answer: {first.answer}"
+        return await triage_agent.run(
+            question=f"In one word, summarize this answer: {first.text}"
         )
-        return followup.answer

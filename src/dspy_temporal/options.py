@@ -18,7 +18,7 @@ DEFAULT_NON_RETRYABLE = ["ContextWindowExceededError"]
 
 
 class RunMode(str, Enum):
-    """How a deployed program runs on Temporal.
+    """How a program runs on Temporal.
 
     - ``COARSE``: the whole ``dspy.Module`` runs in one activity; durability is
       job-level (a crash re-runs the whole program).

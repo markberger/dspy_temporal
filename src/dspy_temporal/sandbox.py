@@ -34,10 +34,6 @@ from temporalio.worker.workflow_sandbox import (
 #     which is what lets the workflow file import the ref with a *plain* import, no
 #     `imports_passed_through()` dance. The user's own workflow module is not under
 #     this prefix, so it stays fully sandboxed.
-#
-# `opentelemetry` is included because, when tracing is enabled, the worker inherits
-# the client's TracingInterceptor whose workflow-side component imports OTel inside
-# the sandbox; it is otherwise unused in workflow code.
 PASSTHROUGH_MODULES = (
     "dspy",
     "litellm",

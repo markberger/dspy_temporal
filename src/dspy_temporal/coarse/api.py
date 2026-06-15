@@ -44,7 +44,7 @@ from ..registry import ModuleSource, default_registry, register_program
 
 @dataclass(frozen=True, kw_only=True)
 class TemporalProgram:
-    """An immutable reference to a deployed program.
+    """An immutable reference to a program.
 
     Carries everything a workflow needs to *dispatch* the program -- its ``name``,
     its ``mode`` (coarse = whole-program activity, fine = per-call activities), the
@@ -188,8 +188,9 @@ def program(
     implementation on the worker with ``ref.bind(impl)``. ``mode`` selects coarse
     vs. fine; ``options`` sets the default activity timeout/retry; pass
     ``activity_task_queue`` to route the LM-heavy activity to a dedicated pool
-    (coarse mode); pass ``result`` to adapt the ``dspy.Prediction`` into a typed
-    value so workflow code never touches dspy.
+    (coarse: the program activity; fine: every per-call activity); pass ``result``
+    to adapt the ``dspy.Prediction`` into a typed value so workflow code never
+    touches dspy.
     """
     return TemporalProgram(
         name=name,

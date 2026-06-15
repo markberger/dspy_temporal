@@ -42,7 +42,7 @@ def build_worker(
     module whose import-time side effects would trip the sandbox.
 
     ``extra_workflows`` registers additional ``@workflow.defn`` classes on the
-    same worker -- e.g. a user-authored workflow that composes a deployed program
+    same worker -- e.g. a user-authored workflow that composes a program
     via ``await agent.run(**inputs)`` (see ``TemporalProgram.run``).
 
     The activities/workflows/runner/executor are all contributed by

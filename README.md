@@ -79,7 +79,7 @@ quickest path.
 
 ## Quickstart
 
-A deployment has three pieces: a **program** (your `dspy.Module`), a **worker** (the process
+Running a program has three pieces: a **program** (your `dspy.Module`), a **worker** (the process
 that runs it), and a **starter** (kicks off a run). The snippets below are plain Python —
 run them with `python your_script.py`.
 
@@ -305,7 +305,8 @@ agent = dt.program("compose_qa", result=lambda p: Answer(text=str(p.answer)))
 **Dedicated activity pool.** `program(..., activity_task_queue="gpu-pool")` (or
 `agent.on_task_queue("gpu-pool")`) routes the LM-heavy activity to its own worker pool while
 your workflow stays on the cheap queue — in coarse mode the single program activity, in fine
-mode every per-call `dspy_lm_call` / `dspy_tool_call`. Runnable example: `examples/compose_refs.py`
+mode every per-call `dspy_lm_call` / `dspy_tool_call`. Runnable example (also demonstrating the
+typed `result` adapter above — it returns a pydantic `Answer`): `examples/compose_refs.py`
 + `examples/compose_program.py` + `examples/run_compose.py`.
 
 ### Fine-grained mode (per-call activities)
